@@ -26,7 +26,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # pnpm 11 requires Node >= 22 (Node 20 crashes with
+          # ERR_UNKNOWN_BUILTIN_MODULE, see failed v0.2.0/v0.2.1 runs)
+          node-version: 22
 
       - name: Install FreeRDP (bridge build dependency)
         run: brew install freerdp
