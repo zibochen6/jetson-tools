@@ -426,6 +426,13 @@ static BOOL jr_post_connect(freerdp* instance)
 		    context->channels, CLIPRDR_SVC_CHANNEL_NAME);
 	jr_clip_wire(s);
 
+	/* Clear any stale held-modifier state the (possibly reused) remote X
+	 * session retained from earlier sessions whose key-ups were lost
+	 * (KI-023: macOS swallows the flagsChanged of a Cmd released while the
+	 * app was inactive — Cmd+Tab / Cmd+Q / Spotlight). See the regression
+	 * guide §2.4 before touching this. */
+	jr_session_reset_keyboard_modifiers(s);
+
 	if (s->cb.on_connected)
 		s->cb.on_connected(s->cb.user);
 	return TRUE;
@@ -738,6 +745,43 @@ int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scan
 	if (extended)
 		flags |= KBD_FLAGS_EXTENDED;
 	return freerdp_input_send_keyboard_event(s->context->input, flags, (UINT8)scancode) ? 0 : -1;
+}
+
+/* Release every modifier key so the remote keyboard state can never stay
+ * stuck (KI-023). macOS swallows the flagsChanged of a Command key released
+ * while the app is inactive (Cmd+Tab / Cmd+Q / Spotlight), and xrdp retains
+ * the stale "Super held" state in its persistent X session across reconnects
+ * — the user then sees Super+E open the file manager and Super+Space eaten by
+ * the input-method shortcut. Releasing a non-held key is a no-op on the
+ * server, so this runs unconditionally at connect/focus/attach. */
+int jr_session_reset_keyboard_modifiers(jr_session_t* s)
+{
+	static const struct
+	{
+		int sc;
+		int ext;
+	} kMods[] = {
+	    {0x1D, 0}, /* LCtrl          */
+	    {0x1D, 1}, /* RCtrl   (E0)   */
+	    {0x2A, 0}, /* LShift         */
+	    {0x36, 0}, /* RShift         */
+	    {0x38, 0}, /* LAlt           */
+	    {0x38, 1}, /* RAlt    (E0)   */
+	    {0x5B, 1}, /* LMeta   (E0)   */
+	    {0x5C, 1}, /* RMeta   (E0)   */
+	};
+	size_t i;
+	int rc = 0;
+
+	if (!s || !s->context || !s->gdi)
+		return -1;
+	for (i = 0; i < sizeof(kMods) / sizeof(kMods[0]); i++)
+	{
+		if (jr_session_send_key_scancode(s, 0, 0, kMods[i].sc, kMods[i].ext) != 0)
+			rc = -1;
+	}
+	fprintf(stderr, "[jr-input] keyboard modifier reset: 8 releases sent\n");
+	return rc;
 }
 
 /* ------------------------------------------------------------------ */

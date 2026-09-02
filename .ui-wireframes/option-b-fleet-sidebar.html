@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>Option B — Fleet Sidebar</title>
+<style>
+  :root { --bg:#0b1020; --panel:#141b2e; --block:#1e293b; --block2:#263449; --line:#334155; --txt:#64748b; --acc:#0ea5e9; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC",sans-serif; background:var(--bg); color:var(--txt); padding:24px; }
+  .win { max-width:1000px; margin:0 auto 40px; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; display:flex; }
+  .cap { padding:10px 16px; font-size:12px; font-weight:600; color:var(--acc); background:rgba(14,165,233,.08); border-bottom:1px dashed var(--line); text-transform:uppercase; letter-spacing:.05em; }
+  .wrap { max-width:1000px; margin:0 auto 40px; }
+  .label { position:absolute; top:6px; right:10px; font-size:10px; font-weight:600; color:var(--acc); background:rgba(14,165,233,.1); padding:2px 6px; border-radius:4px; }
+  .sec { position:relative; flex:1; }
+
+  /* sidebar */
+  .side { width:220px; background:#101827; border-right:1px solid var(--line); padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
+  .brand { display:flex; gap:8px; align-items:center; padding:4px 8px 14px; font-size:13px; color:#e2e8f0; font-weight:600; }
+  .brand .ic { width:26px; height:26px; border-radius:8px; background:var(--block2); display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .dev { display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:8px; font-size:12px; color:#94a3b8; }
+  .dev.active { background:var(--block); color:#e2e8f0; box-shadow:inset 2px 0 0 var(--acc); }
+  .dot { width:7px; height:7px; border-radius:50%; background:#22c55e; flex:none; }
+  .dot.busy { background:#f59e0b; } .dot.off { background:#475569; }
+  .dev .nm { flex:1; } .dev .ip { font-size:10px; color:#64748b; }
+  .addbtn { margin-top:auto; padding:9px; border:1px dashed var(--line); border-radius:8px; text-align:center; font-size:12px; }
+
+  .desktop { height:320px; background:repeating-linear-gradient(45deg,#0d1526,#0d1526 12px,#0f1830 12px,#0f1830 24px); display:flex; align-items:center; justify-content:center; font-size:13px; }
+  .native { border:2px dashed #38bdf8; border-radius:8px; padding:24px 40px; color:#7dd3fc; }
+
+  /* home */
+  .home { padding:36px 24px; display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .titlebar { width:180px; height:18px; background:var(--block2); border-radius:4px; }
+  .subtitle { width:240px; height:10px; background:var(--block); border-radius:3px; }
+  .panel2 { width:340px; background:#182136; border:1px solid var(--line); border-radius:12px; padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .field { height:36px; background:var(--block); border-radius:6px; position:relative; }
+  .field span { position:absolute; left:10px; top:10px; font-size:11px; }
+  .btn { height:38px; background:var(--acc); border-radius:8px; color:#04121d; font-weight:600; font-size:13px; display:flex; align-items:center; justify-content:center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="cap">Option B — 左侧设备栏 (Fleet Sidebar) · 状态 1：已连接多台</div>
+    <div class="win">
+      <div class="side">
+        <div class="brand"><div class="ic">▣</div>Jetson Remote</div>
+        <div class="dev active"><span class="dot"></span><span class="nm">jetson-orin</span><span class="ip">.31</span></div>
+        <div class="dev"><span class="dot busy"></span><span class="nm">jetson-nano</span><span class="ip">.42</span></div>
+        <div class="dev"><span class="dot off"></span><span class="nm">saved · agx</span><span class="ip">.7</span></div>
+        <div class="addbtn">＋ 连接新设备</div>
+      </div>
+      <div class="sec">
+        <span class="label">#18 sidebar + #22 status dots</span>
+        <div class="desktop"><div class="native">原生桌面视图（激活设备的嵌入式画面）</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="cap">Option B — 状态 2：首页（新连接表单在右侧主区）</div>
+    <div class="win">
+      <div class="side">
+        <div class="brand"><div class="ic">▣</div>Jetson Remote</div>
+        <div class="dev"><span class="dot off"></span><span class="nm">saved · orin</span><span class="ip">.31</span></div>
+        <div class="addbtn">＋ 连接新设备</div>
+      </div>
+      <div class="sec">
+        <span class="label">#14 inputs + #1 CTA</span>
+        <div class="home">
+          <div class="titlebar"></div>
+          <div class="subtitle"></div>
+          <div class="panel2">
+            <div class="field"><span>Jetson IP</span></div>
+            <div class="field"><span>Username</span></div>
+            <div class="field"><span>Password</span></div>
+            <div class="btn">Connect</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::rdp::client::RdpClient;
@@ -140,6 +141,171 @@ pub fn rdp_status(
         Engine::Embedded => embedded.status(),
         Engine::Sidecar => sidecar.status(),
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Multi-device sessions (V0.4)                                        */
+/* ------------------------------------------------------------------ */
+
+/// Points reserved at the top of the window for the webview tab bar; focused
+/// sessions mount their native view below this strip. MUST match `TAB_BAR_H`
+/// in the frontend (`SessionTabBar`).
+pub const SESSION_TAB_BAR_INSET: f64 = 44.0;
+
+/// Password resolution + tunnel routing shared by the legacy launch and the
+/// keyed session launch (identical behavior; extracted to avoid drift).
+async fn prepare_request(
+    app: &AppHandle,
+    secrets: &FileSecretStore,
+    tunnels: &TunnelManager,
+    request: &mut RdpConnectionRequest,
+) -> Result<(), RdpIpcError> {
+    // A typed password wins; None (or empty) falls back to the remembered
+    // one. Missing → typed error; the frontend asks the user for a password.
+    // The fallback resolves the secret-store account from remembered.json so
+    // tunnel mode (wire host rewritten to loopback, KI-021) works too.
+    let remembered_store =
+        RememberedDeviceStore::for_app(app).map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    let password = remember::resolve_password(
+        &remembered_store,
+        secrets,
+        &request.host,
+        &request.username,
+        request.password.as_deref(),
+    )
+    .map_err(|_| map_rdp_error(RdpError::PasswordMissing))?;
+    request.password = Some(password.clone());
+
+    // Route the RDP plane through the in-app loopback tunnel (system ssh).
+    let manager = tunnels.clone();
+    let app2 = app.clone();
+    let host = request.host.clone();
+    let username = request.username.clone();
+    let endpoints = tokio::task::spawn_blocking(move || {
+        manager.ensure(
+            &app2,
+            &host,
+            crate::ssh::types::DEFAULT_PORT,
+            &username,
+            &password,
+        )
+    })
+    .await
+    .map_err(|_| map_rdp_error(RdpError::Unknown))?
+    .map_err(map_tunnel_rdp_error)?;
+    request.host = endpoints.host;
+    request.port = endpoints.rdp_port;
+    Ok(())
+}
+
+/// Launch (or re-focus) ONE device's desktop session inside the multi-session
+/// manager (V0.4). The session stays alive in the background when another tab
+/// is focused, so switching back never reconnects. Same password/tunnel
+/// security envelope as `launch_remote_desktop`.
+#[tauri::command]
+pub async fn launch_session(
+    app: AppHandle,
+    secrets: State<'_, FileSecretStore>,
+    tunnels: State<'_, TunnelManager>,
+    embedded: State<'_, RdpSessionManager>,
+    session_id: String,
+    mut request: RdpConnectionRequest,
+) -> Result<RdpLaunchResult, RdpIpcError> {
+    if matches!(engine(), Engine::Sidecar) {
+        // Dev-only sidecar engine predates multi-session; keep it single.
+        return Err(map_rdp_error(RdpError::Unknown));
+    }
+    if session_id.is_empty() {
+        return Err(map_rdp_error(RdpError::Unknown));
+    }
+    if embedded.is_running_keyed(&session_id) {
+        // Already connected: just bring it to the screen.
+        let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
+        embedded
+            .focus(&session_id, ns_window, SESSION_TAB_BAR_INSET)
+            .map_err(map_rdp_error)?;
+        return Ok(RdpLaunchResult::AlreadyRunning);
+    }
+
+    prepare_request(&app, &secrets, &tunnels, &mut request).await?;
+
+    let config = RdpConnectionConfig::from(request);
+    eprintln!(
+        "[jr-flow] rdp session launch id={} host={} port={}",
+        session_id, config.host, config.port
+    );
+    let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
+    embedded
+        .launch_keyed(&session_id, &config, ns_window, SESSION_TAB_BAR_INSET)
+        .map_err(map_rdp_error)?;
+    Ok(RdpLaunchResult::Opened)
+}
+
+/// Quick-switch the on-screen desktop without reconnecting (V0.4 tab bar).
+/// `sessionId: null` hides every session so the webview home is visible;
+/// the RDP connections keep running in the background.
+#[tauri::command]
+pub async fn focus_session(
+    app: AppHandle,
+    embedded: State<'_, RdpSessionManager>,
+    session_id: Option<String>,
+) -> Result<(), RdpIpcError> {
+    if matches!(engine(), Engine::Sidecar) {
+        return Err(map_rdp_error(RdpError::Unknown));
+    }
+    match session_id {
+        None => {
+            embedded.hide_all();
+            Ok(())
+        }
+        Some(id) => {
+            let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
+            embedded
+                .focus(&id, ns_window, SESSION_TAB_BAR_INSET)
+                .map_err(map_rdp_error)
+        }
+    }
+}
+
+/// Close ONE device's desktop session (tab "×"). Other sessions are
+/// untouched. Idempotent; the remote Xorg/XFCE session is left alive.
+#[tauri::command]
+pub async fn close_session(
+    embedded: State<'_, RdpSessionManager>,
+    session_id: String,
+) -> Result<(), RdpIpcError> {
+    match engine() {
+        Engine::Embedded => embedded
+            .close_keyed(&session_id)
+            .await
+            .map_err(map_rdp_error),
+        Engine::Sidecar => Err(map_rdp_error(RdpError::Unknown)),
+    }
+}
+
+/// One session's status (frontend polls per active tab).
+#[tauri::command]
+pub fn session_status(embedded: State<'_, RdpSessionManager>, session_id: String) -> RdpStatus {
+    embedded.status_keyed(&session_id)
+}
+
+/// IPC row for `all_session_statuses`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatusEntry {
+    pub session_id: String,
+    pub status: RdpStatus,
+}
+
+/// Every session's status in one round-trip (tab-bar status dots + exit
+/// detection for all connected devices).
+#[tauri::command]
+pub fn all_session_statuses(embedded: State<'_, RdpSessionManager>) -> Vec<SessionStatusEntry> {
+    embedded
+        .all_statuses()
+        .into_iter()
+        .map(|(session_id, status)| SessionStatusEntry { session_id, status })
+        .collect()
 }
 
 fn map_tunnel_rdp_error(e: TunnelError) -> RdpIpcError {

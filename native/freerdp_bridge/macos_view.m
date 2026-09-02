@@ -25,6 +25,43 @@ static void jr_cg_buffer_release(void* info, const void* data, size_t size)
 /* Apple virtual key code -> XT (PS/2 set 1) make code; `ext` = E0-prefixed. */
 static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext);
 
+/* Modifier keys forwarded via flagsChanged (KI-023 stuck-modifier guard):
+ * vk -> RDP scancode + shared NSEventModifierFlag bit + E0 preview flag.
+ * Note AppKit exposes only ONE combined bit per modifier KIND (no L/R
+ * distinction in modifierFlags), so L/R pairs share a bit; flagsChanged
+ * disambiguates them via the vk of the event itself. */
+typedef struct
+{
+	unsigned short vk;
+	unsigned char sc;
+	BOOL ext;
+	NSUInteger bit;
+} jr_mod_entry;
+
+static const jr_mod_entry kJRMods[] = {
+    {0x39, 0x3A, NO, NSEventModifierFlagCapsLock}, /* CapsLock        */
+    {0x38, 0x2A, NO, NSEventModifierFlagShift},    /* LShift          */
+    {0x3C, 0x36, NO, NSEventModifierFlagShift},    /* RShift          */
+    {0x3B, 0x1D, NO, NSEventModifierFlagControl},  /* LCtrl           */
+    {0x3E, 0x1D, YES, NSEventModifierFlagControl}, /* RCtrl  (E0)     */
+    {0x3A, 0x38, NO, NSEventModifierFlagOption},   /* LOpt            */
+    {0x3D, 0x38, YES, NSEventModifierFlagOption},  /* ROpt   (E0)     */
+    {0x37, 0x5B, YES, NSEventModifierFlagCommand}, /* LCmd   (E0, Win)*/
+    {0x36, 0x5C, YES, NSEventModifierFlagCommand}, /* RCmd   (E0, Win)*/
+};
+#define JR_MOD_COUNT (sizeof(kJRMods) / sizeof(kJRMods[0]))
+
+static int jr_mod_index(unsigned short vk)
+{
+	size_t i;
+	for (i = 0; i < JR_MOD_COUNT; i++)
+	{
+		if (kJRMods[i].vk == vk)
+			return (int)i;
+	}
+	return -1;
+}
+
 @interface JRView : NSView
 - (void)presentBuffer:(uint8_t*)buffer width:(int)w height:(int)h stride:(int)s;
 - (void)setFillRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b;
@@ -35,7 +72,12 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 {
 	jr_session_t* _inputSession; /* non-owning; NULL while detached */
 	int _pressedButtons;         /* bitmask 1=left 2=right 4=middle */
-	NSUInteger _lastModifiers;
+	NSUInteger _lastModifiers;   /* last modifierFlags we saw (delta base) */
+	BOOL _modHeld[JR_MOD_COUNT]; /* per-vk physical states we sent (KI-023) */
+	id _becomeKeyObs;            /* window did-become-key observer        */
+	id _resignKeyObs;            /* window did-resign-key observer        */
+	id _becomeActiveObs;         /* NSApp did-become-active observer      */
+	id _resignActiveObs;         /* NSApp did-resign-active observer      */
 	int _dragLog;
 	int _moveLog;
 }
@@ -45,13 +87,42 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 	self = [super initWithFrame:frame];
 	if (self)
 	{
+		NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+		JRView* __weak ws = self;
 		self.wantsLayer = YES;
 		self.layer.magnificationFilter = kCAFilterLinear;
 		self.layer.contentsGravity = kCAGravityResizeAspect;
 		self.layer.backgroundColor =
 		    [[NSColor colorWithCalibratedWhite:0.12 alpha:1.0] CGColor];
+		/* App-level focus/activation sweeps (KI-023): when the app stops/gets
+		 * activated, the remote modifier state must be reset — macOS delivers
+		 * no flagsChanged for a Cmd released while the app is inactive, and a
+		 * forgotten release means a permanently stuck Super on the remote. */
+		_becomeActiveObs = [nc addObserverForName:NSApplicationDidBecomeActiveNotification
+		                                 object:nil queue:nil usingBlock:^(NSNotification* note) {
+		  (void)note;
+		  JRView* s = ws;
+		  if (s)
+			  [s jrKeyboardSweepRelease];
+		}];
+		_resignActiveObs = [nc addObserverForName:NSApplicationDidResignActiveNotification
+		                                 object:nil queue:nil usingBlock:^(NSNotification* note) {
+		  (void)note;
+		  JRView* s = ws;
+		  if (s)
+			  [s jrKeyboardSweepRelease];
+		}];
 	}
 	return self;
+}
+
+- (void)dealloc
+{
+	[self jrUnsubscribeWindowNotifications];
+	if (_becomeActiveObs)
+		[[NSNotificationCenter defaultCenter] removeObserver:_becomeActiveObs];
+	if (_resignActiveObs)
+		[[NSNotificationCenter defaultCenter] removeObserver:_resignActiveObs];
 }
 
 - (BOOL)isOpaque
@@ -104,10 +175,52 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 	_inputSession = session;
 	_pressedButtons = 0;
 	_lastModifiers = 0;
-	if (session && self.window)
-		[self.window makeFirstResponder:self];
-	else if (!session && self.window && self.window.firstResponder == self)
+	memset(_modHeld, 0, sizeof(_modHeld));
+	if (session)
+	{
+		/* Clear any modifier state a reused xrdp X session still believes is
+		 * held (KI-023). No-op while the session isn't connected yet; the
+		 * bridge re-runs the same reset from PostConnect once it is. Also runs
+		 * on every tab-switch refocus. */
+		if (jr_session_reset_keyboard_modifiers(session) == 0)
+			NSLog(@"[jr-input] attach: keyboard modifier reset sent");
+		if (self.window)
+			[self.window makeFirstResponder:self];
+	}
+	else if (self.window && self.window.firstResponder == self)
 		[self.window makeFirstResponder:self.nextResponder];
+}
+
+/* Release every modifier the remote side might believe is held, and drop the
+ * local per-vk model. Runs on: window resign/become key, app resign/become
+ * active, input attach. Releasing a key that isn't down is a no-op remotely.
+ * We deliberately do NOT re-assert currently-held modifiers afterwards: with
+ * only the combined NSEventModifierFlag bits (no L/R distinction) re-sending
+ * "held" states could itself create a new stuck key; the next real
+ * flagsChanged resyncs naturally. */
+- (void)jrKeyboardSweepRelease
+{
+	if (!_inputSession)
+		return;
+	if (jr_session_reset_keyboard_modifiers(_inputSession) == 0)
+		NSLog(@"[jr-input] keyboard modifier sweep sent (focus/window change)");
+	memset(_modHeld, 0, sizeof(_modHeld));
+	_lastModifiers = 0;
+}
+
+- (void)jrUnsubscribeWindowNotifications
+{
+	NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+	if (_becomeKeyObs)
+	{
+		[nc removeObserver:_becomeKeyObs];
+		_becomeKeyObs = nil;
+	}
+	if (_resignKeyObs)
+	{
+		[nc removeObserver:_resignKeyObs];
+		_resignKeyObs = nil;
+	}
 }
 
 - (BOOL)acceptsFirstResponder
@@ -124,8 +237,29 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 - (void)viewDidMoveToWindow
 {
 	[super viewDidMoveToWindow];
-	if (self.window && _inputSession)
-		[self.window makeFirstResponder:self];
+	[self jrUnsubscribeWindowNotifications];
+	if (self.window)
+	{
+		NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+		JRView* __weak ws = self;
+		NSWindow* win = self.window;
+		_becomeKeyObs = [nc addObserverForName:NSWindowDidBecomeKeyNotification
+		                               object:win queue:nil usingBlock:^(NSNotification* note) {
+		  (void)note;
+		  JRView* s = ws;
+		  if (s)
+			  [s jrKeyboardSweepRelease];
+		}];
+		_resignKeyObs = [nc addObserverForName:NSWindowDidResignKeyNotification
+		                               object:win queue:nil usingBlock:^(NSNotification* note) {
+		  (void)note;
+		  JRView* s = ws;
+		  if (s)
+			  [s jrKeyboardSweepRelease];
+		}];
+		if (_inputSession)
+			[self.window makeFirstResponder:self];
+	}
 }
 
 - (void)updateTrackingAreas
@@ -317,6 +451,8 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
 		return;
 	jr_session_send_key_scancode(_inputSession, 1, e.isARepeat ? 1 : 0, sc, ext ? 1 : 0);
+	NSLog(@"[jr-input] keyDown vk=0x%02X sc=0x%02X%s repeat=%d", e.keyCode, sc,
+	      ext ? " ext" : "", e.isARepeat ? 1 : 0);
 }
 
 - (void)keyUp:(NSEvent*)e
@@ -328,65 +464,50 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
 		return;
 	jr_session_send_key_scancode(_inputSession, 0, 0, sc, ext ? 1 : 0);
+	NSLog(@"[jr-input] keyUp vk=0x%02X sc=0x%02X%s", e.keyCode, sc, ext ? " ext" : "");
 }
 
 - (void)flagsChanged:(NSEvent*)e
 {
-	unsigned char sc = 0;
-	BOOL ext = NO;
-	NSUInteger bit = 0;
+	int idx = jr_mod_index(e.keyCode);
+	const jr_mod_entry* m;
+	NSUInteger now;
+	NSUInteger prev;
 	int down;
 
-	if (!_inputSession)
+	if (!_inputSession || idx < 0)
 		return;
-	switch (e.keyCode)
+	m = &kJRMods[idx];
+	now = e.modifierFlags;
+	prev = _lastModifiers;
+
+	if ((now ^ prev) & m->bit)
 	{
-		case 0x39: /* CapsLock */
-			sc = 0x3A;
-			bit = NSEventModifierFlagCapsLock;
-			break;
-		case 0x38: /* LShift */
-			sc = 0x2A;
-			bit = NSEventModifierFlagShift;
-			break;
-		case 0x3C: /* RShift */
-			sc = 0x36;
-			bit = NSEventModifierFlagShift;
-			break;
-		case 0x3B: /* LCtrl */
-			sc = 0x1D;
-			bit = NSEventModifierFlagControl;
-			break;
-		case 0x3E: /* RCtrl */
-			sc = 0x1D;
-			ext = YES;
-			bit = NSEventModifierFlagControl;
-			break;
-		case 0x3A: /* LOpt */
-			sc = 0x38;
-			bit = NSEventModifierFlagOption;
-			break;
-		case 0x3D: /* ROpt */
-			sc = 0x38;
-			ext = YES;
-			bit = NSEventModifierFlagOption;
-			break;
-		case 0x37: /* LCmd */
-			sc = 0x5B;
-			ext = YES;
-			bit = NSEventModifierFlagCommand;
-			break;
-		case 0x36: /* RCmd */
-			sc = 0x5C;
-			ext = YES;
-			bit = NSEventModifierFlagCommand;
-			break;
-		default:
-			return;
+		/* The OS flag bit transitioned: authoritative direction. */
+		down = (now & m->bit) ? 1 : 0;
 	}
-	down = (e.modifierFlags & bit) ? 1 : 0;
-	jr_session_send_key_scancode(_inputSession, down, 0, sc, ext ? 1 : 0);
-	_lastModifiers = e.modifierFlags;
+	else if (m->bit != NSEventModifierFlagCapsLock && (now & m->bit))
+	{
+		/* A second physical key of an L/R pair (e.g. RShift pressed while
+		 * LShift is held) does not change the shared flag bit. Each physical
+		 * key keeps its own last state and toggles, so press/release stay
+		 * balanced on the wire instead of being dropped or doubled. */
+		down = _modHeld[idx] ? 0 : 1;
+	}
+	else
+	{
+		/* No observable change (stale event, or release of a key the remote
+		 * never learned about after a sweep): sending it would unbalance the
+		 * remote state, so skip. */
+		_lastModifiers = now;
+		return;
+	}
+
+	jr_session_send_key_scancode(_inputSession, down, 0, m->sc, m->ext ? 1 : 0);
+	_modHeld[idx] = down;
+	_lastModifiers = now;
+	NSLog(@"[jr-input] flagsChanged vk=0x%02X sc=0x%02X%s -> %s", e.keyCode, m->sc,
+	      m->ext ? " ext" : "", down ? "DOWN" : "UP");
 }
 
 @end
@@ -548,6 +669,23 @@ void jr_view_add_to_window(void* handle, void* ns_window)
 	run_on_main(^{
 	  NSView* content = win.contentView;
 	  v.frame = content.bounds;
+	  v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+	  [content addSubview:v positioned:NSWindowAbove relativeTo:nil];
+	});
+}
+
+void jr_view_add_to_window_inset(void* handle, void* ns_window, double top_inset)
+{
+	JRView* v = (__bridge JRView*)handle;
+	NSWindow* win = (__bridge NSWindow*)ns_window;
+	run_on_main(^{
+	  NSView* content = win.contentView;
+	  CGRect b = content.bounds;
+	  CGFloat inset = top_inset > 0 ? (CGFloat)top_inset : 0;
+	  /* AppKit origin is bottom-left: pin the view bottom, leave `inset` free
+	   * at the top. Width+height sizable with fixed margins preserves the
+	   * inset across window resizes. */
+	  v.frame = NSMakeRect(0, 0, b.size.width, MAX(b.size.height - inset, 100));
 	  v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	  [content addSubview:v positioned:NSWindowAbove relativeTo:nil];
 	});

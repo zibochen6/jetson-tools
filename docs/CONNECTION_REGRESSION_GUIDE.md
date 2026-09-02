@@ -76,6 +76,7 @@ xrdp 对 `TS_POINTER_EVENT` 的解析（v0.9.17 `xrdp/xrdp_wm.c::xrdp_wm_process
 - **in-app 环回隧道（KI-021）**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。0.2.1 起后端用系统 `/usr/bin/ssh` 自建隧道，SSH/RDP 双平面一律走 127.0.0.1；本地端口优先 2222/3389（信任库按 wire host:port 计，端口稳定）。dev 仅可用编译期 `VITE_JR_SSH_PORT` 复用外部隧道；改 `tunnel.rs` / `tauriService.ts` 路由逻辑重看 KI-004/KI-021。
 - **RDPGFX 接线**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 是黑屏根因（KI-013）——通道接线逻辑动它前必须理解。
 - **杀会话用锚定模式**：`pkill -f "^/usr/lib/xorg/Xorg :10"`；裸 `pkill -f "Xorg :10"` 会匹配自身 ssh 命令行自杀。
+- **修饰键状态同步（KI-023）**：Cmd（→Super，0x5B/0x5C, E0）的 `flagsChanged` 松开事件可能被 macOS 系统快捷键路径吞掉（Cmd+Tab 切应用、Cmd+Q 退出、Cmd+空格 Spotlight），远端 Xorg 会永远认为 Super 按住；xrdp 常驻 X 会话跨重连保留卡键态，于是「一连上就复现」：**e → 打开 Thunar（Super+E）、空格 → 被输入法切换快捷键吃掉**。改 `macos_view.m` 的 `flagsChanged`/焦点处理或 `bridge.c` 的键盘发送前必读本条目：连接建立（PostConnect）、输入 attach（含 Tab refocus）、窗口/应用焦点变化必须调用 `jr_session_reset_keyboard_modifiers`（释放全部修饰键，幂等），且不得在焦点恢复时反向补发「仍按住」的修饰键（AppKit 无 L/R 区分，补发可能制造新的卡键）。
 
 ---
 
@@ -196,6 +197,7 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | KI-019 | 剪贴板不通 | **四坑（2.2）** | 已修复 |
 | KI-020 | 每次启动弹 Keychain 授权密码 | ad-hoc 身份不被 Keychain ACL 稳定信任 | 已修复（0600 文件存储） |
 | KI-021 | 未开手动隧道即连不上 | release 内嵌手动隧道路由 | 已修复（app 自建隧道） |
+| KI-023 | 按 e 打开文件管理器、空格失灵（其他键正常） | 远端 Super 卡键：Cmd 松开事件被 macOS 系统快捷键路径吞掉 + xrdp 常驻会话保留卡键态 | 已修复（连接/焦点/attach 自动 reset 修饰键） |
 | 新 | 新症状… | 待分析 | |
 
 ※ KI 详文见 `docs/KNOWN_ISSUES.md`；嵌入式设计见 `docs/EMBEDDED_RDP.md`。
@@ -211,4 +213,6 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 
 ---
 
-*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）。*
+- 改 `flagsChanged` 或新增 reset 调用点时，先跑设备侧地面真值：`DISPLAY=:10.0 xinput query-state <键盘设备id>` 空闲时 `down:` 列表不应有 Super_L(133)；有即卡键。
+
+*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量。*

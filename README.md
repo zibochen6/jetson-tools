@@ -12,7 +12,7 @@ No HDMI. No VNC setup. No display configuration.
 
 ## 这是什么
 
-零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。
+零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。0.3.0 起支持**多设备同时连接**：多台 Jetson 各开一个会话，顶部 Tab 栏一键切换桌面（连接保持、零重连）。
 
 （XRDP / xorgxrdp / XFCE / FreeRDP / SSH Tunnel 都是实现细节，用户无需理解。）
 
@@ -68,7 +68,7 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore
 - **改任何连接/输入/剪贴板代码前必读**：`docs/CONNECTION_REGRESSION_GUIDE.md`（链路全景、编码硬规则、回归清单、调试速查）
 ## 发布与自动更新
 
-- **发布流程**：改完功能 → 同步 bump 三处版本（`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`package.json`）→ 打 tag 推 GitHub（`v0.2.x`）→ Actions 自动构建并发布 Release（dmg + `Jetson Remote.app.tar.gz`）。
+- **发布流程**：改完功能 → 同步 bump 三处版本（`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`package.json`）→ 打 tag 推 GitHub（`v0.3.x`）→ Actions 自动构建并发布 Release（dmg + `Jetson Remote.app.tar.gz`）。
   - 本地手动发布：`scripts/release.sh <version>`（走 gh CLI）。
 - **自动更新**：稳定版 app 底栏有「检查更新」按钮 → 拉到最新 Release 后「下载并安装」→ 自动替换当前 app 并重启。
   - 开发版（`tauri dev`）只提示新版本并给下载页链接，不做自替换。

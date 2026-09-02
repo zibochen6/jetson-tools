@@ -11,22 +11,26 @@ export function ErrorScreen() {
   return (
     <div className="mx-auto flex h-full max-w-sm flex-col items-center justify-center text-center">
       <span
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl text-red-600 dark:bg-red-900/40 dark:text-red-400"
+        className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-2xl text-red-600 dark:bg-red-500/15 dark:text-red-400"
         aria-hidden
       >
-        !
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
       </span>
-      <h2 className="mt-3 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+      <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
         {error.title}
       </h2>
       {error.suggestions.length > 0 && (
-        <ul className="mt-4 space-y-1 text-sm text-zinc-500 dark:text-zinc-400">
+        <ul className="mt-4 space-y-1.5 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
           {error.suggestions.map((s) => (
             <li key={s}>{s}</li>
           ))}
         </ul>
       )}
-      <div className="mt-6 flex gap-3">
+      <div className="mt-7 flex gap-3">
         <Button onClick={retry}>Retry</Button>
         <Button variant="secondary" onClick={back}>
           Back

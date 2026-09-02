@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>Option C — Device Grid Home + Tabs</title>
+<style>
+  :root { --bg:#0b1020; --panel:#141b2e; --block:#1e293b; --block2:#263449; --line:#334155; --txt:#64748b; --acc:#0ea5e9; --acc2:#a855f7; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC",sans-serif; background:var(--bg); color:var(--txt); padding:24px; }
+  .win { max-width:1000px; margin:0 auto 40px; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .cap { padding:10px 16px; font-size:12px; font-weight:600; color:var(--acc); background:rgba(14,165,233,.08); border-bottom:1px dashed var(--line); text-transform:uppercase; letter-spacing:.05em; }
+  .sec { position:relative; }
+  .label { position:absolute; top:6px; right:10px; font-size:10px; font-weight:600; color:var(--acc); background:rgba(14,165,233,.1); padding:2px 6px; border-radius:4px; }
+
+  /* home */
+  .home { padding:36px 32px; }
+  .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+  .brand { display:flex; gap:10px; align-items:center; font-size:15px; color:#e2e8f0; font-weight:600; }
+  .brand .ic { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,var(--acc),var(--acc2)); }
+  .newbtn { padding:8px 14px; background:var(--acc); border-radius:8px; color:#04121d; font-size:12px; font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .card { background:#182136; border:1px solid var(--line); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .card .row { display:flex; align-items:center; gap:8px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#475569; }
+  .dot.on { background:#22c55e; }
+  .nm { font-size:13px; color:#e2e8f0; font-weight:600; }
+  .ip { font-size:11px; }
+  .meta { height:8px; width:70%; background:var(--block); border-radius:3px; }
+  .cardbtn { margin-top:6px; padding:7px; border-radius:8px; background:var(--block2); font-size:11px; text-align:center; color:#94a3b8; }
+  .card.dashed { border:1px dashed var(--line); background:transparent; align-items:center; justify-content:center; font-size:13px; min-height:120px; }
+
+  /* connected */
+  .tabbar { display:flex; align-items:center; gap:6px; padding:8px 12px; border-bottom:1px solid var(--line); background:#101827; }
+  .tab { display:flex; align-items:center; gap:8px; padding:7px 12px; border-radius:8px; font-size:12px; color:#94a3b8; }
+  .tab.active { background:var(--block); color:#e2e8f0; box-shadow:inset 0 -2px 0 var(--acc); }
+  .x { width:14px; height:14px; border-radius:4px; background:var(--block2); font-size:9px; line-height:14px; text-align:center; }
+  .homechip { padding:7px 12px; border-radius:8px; font-size:12px; color:#94a3b8; border:1px dashed var(--line); }
+  .desktop { height:300px; background:repeating-linear-gradient(45deg,#0d1526,#0d1526 12px,#0f1830 12px,#0f1830 24px); display:flex; align-items:center; justify-content:center; }
+  .native { border:2px dashed #38bdf8; border-radius:8px; padding:24px 40px; color:#7dd3fc; font-size:13px; }
+</style>
+</head>
+<body>
+  <div class="win">
+    <div class="cap">Option C — 首页设备网格 (Device Grid) · 状态 1：未连接的设备总览</div>
+    <div class="sec">
+      <span class="label">#5 feature cards + #22 badges + #24 empty state</span>
+      <div class="home">
+        <div class="head">
+          <div class="brand"><div class="ic"></div>Jetson Remote</div>
+          <div class="newbtn">＋ 连接新设备</div>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <div class="row"><span class="dot on"></span><span class="nm">jetson-orin</span></div>
+            <div class="ip">seeed@192.168.1.31</div>
+            <div class="meta"></div>
+            <div class="cardbtn">已连接 · 打开桌面</div>
+          </div>
+          <div class="card">
+            <div class="row"><span class="dot"></span><span class="nm">jetson-agx</span></div>
+            <div class="ip">seeed@192.168.1.7</div>
+            <div class="meta"></div>
+            <div class="cardbtn">连接（用已存密码）</div>
+          </div>
+          <div class="card dashed">＋<br/>添加设备</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="win">
+    <div class="cap">Option C — 状态 2：连接后，顶部 Tab + 首页可回看 (混合)</div>
+    <div class="sec">
+      <span class="label">tabs + home chip</span>
+      <div class="tabbar">
+        <div class="homechip">⌂ 设备总览</div>
+        <div class="tab active"><span class="dot on"></span>jetson-orin<span class="x">×</span></div>
+        <div class="tab"><span class="dot on"></span>jetson-nano<span class="x">×</span></div>
+      </div>
+      <div class="desktop"><div class="native">原生桌面视图（激活 tab 的嵌入式画面）</div></div>
+    </div>
+  </div>
+</body>
+</html>

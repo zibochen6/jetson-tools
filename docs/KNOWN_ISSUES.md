@@ -162,3 +162,25 @@
   - 前端不再做端口路由，后端 probe/prepare/launch 统一走隧道；`VITE_JR_SSH_PORT` 编译期覆盖保留为 dev 复用外部隧道。
 - **验证**：askpass/认证失败分类/accept-new 本机实测；0.2.1 真机全自动 E2E 通过（启动无弹窗 → 自建隧道 2222/3389 → 自动重连认证成功 → 桌面开启 → 剪贴板通道握手完成）；孤儿隧道启动清理实测。
 - **状态**：✅ 已修复并真机验证（0.2.1）。
+
+
+## KI-022 — 多设备（0.3.0）已知边界
+
+- **剪贴板只跟焦点会话**：全局剪贴板同步同一时刻只绑定当前聚焦的桌面（bridge 全局单例）；切换 Tab 时自动迁移，后台会话不参与剪贴板。
+- **会话分辨率在启动时固定**：每台设备的 RDP 分辨率按其启动时的窗口可视区（窗口高 − 44px Tab 栏）计算；之后改窗口大小走等比缩放（指针映射已补偿），重连才取新几何。
+- **第 2/3 台设备用临时本地端口**：隧道优先端口 2222/3389 只给第一台，其余设备落临时端口 → 主机密钥信任库按 wire host:port 计，这些设备**每次 app 重启后可能重新 TOFU 弹一次信任确认**（第一台不受影响）。后续可改为每设备稳定端口分配。
+- **侧车引擎不支持多会话**：`RDP_ENGINE=sidecar`（仅 dev）仍是单桌面；出货默认 embedded 引擎不受影响。
+- **状态**：已知边界，非缺陷；真机回归建议见 0.3.0 release notes。
+
+## KI-023 — 远端 Super 卡键：按 e 打开文件管理器、空格失灵（已修复）
+
+- **症状**：连接 Jetson 后绝大多数键输入正常，唯独 **e 键一按就自动打开文件管理器（Thunar，Super+E）**、**空格键输入无效（被 Super+Space 输入法切换快捷键吃掉）**；重启 app、重连后依旧「一连接就这样」。
+- **根因（两层叠加）**：
+  1. app 把 Cmd 映射为 RDP Super（0x5B/0x5C, E0）。Cmd 的**松开** `flagsChanged` 若发生在 app 失活期间（Cmd+Tab 切应用、Cmd+Q 退出、Cmd+空格 Spotlight），macOS 不会把该事件投递给 app → 只有 Super down 到达远端、up 永远丢失 → 远端 Xorg 一直认为 Super 按住。
+  2. xrdp 的 X 会话常驻复用（重连复用同一 Xorg :N），卡键状态跨 app 重启/重连持续 → 表现为「一连接就复现」。
+- **修复（纯自动，无 UI）**：
+  - `bridge.c` 新增 `jr_session_reset_keyboard_modifiers`（依次释放 LCtrl/RCtrl/LShift/RShift/LAlt/RAlt/LMeta/RMeta，释放未按下的键是服务端 no-op），`PostConnect` 每次连接/重连自动执行；
+  - `macos_view.m`：窗口 resign/become key、app resign/become active、输入 attach（含多设备 Tab refocus）时触发同款修饰键 sweep 释放；`flagsChanged` 改为按 vk 建模 + 左右键共享 bit 时的 toggle 差分同步（避免漏发/错发），并新增 `[jr-input]` 键盘日志（keyDown/keyUp/flagsChanged/sweep）便于后续诊断。
+  - 设计取舍：焦点恢复时**不**反向补发「仍按住」的修饰键——AppKit 修饰键 flag 无 L/R 区分，补发可能制造新卡键；下次真实 flagsChanged 自然重同步。
+- **诊断口径（地面真值）**：`DISPLAY=:10.0 xinput query-state <键盘设备id>`（先 `xinput list` 找 id），空闲时 `down:` 列表含 Super_L(keycode 133) 即卡键确诊。
+- **状态**：✅ 已修复（2026-09-02；真机回归见 CONNECTION_REGRESSION_GUIDE §3.1/§3.4）。

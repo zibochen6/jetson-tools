@@ -83,6 +83,13 @@ int jr_session_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hd
                                 int hnegative, int x, int y);
 int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scancode,
                                  int extended);
+/* Reset: release every modifier key (LCtrl/RCtrl/LShift/RShift/LAlt/RAlt/
+ * LMeta/RMeta). Heals a "stuck Super" on the remote side (KI-023): macOS can
+ * swallow the key-up of Command (system shortcuts like Cmd+Tab/Cmd+Q), and
+ * xrdp keeps the stale modifier state in its persistent X session across
+ * reconnects. Releasing a key that isn't held is a no-op remotely, so this is
+ * safe to call on every connect / focus change / input attach. */
+int jr_session_reset_keyboard_modifiers(jr_session_t* s);
 int jr_session_set_size(jr_session_t* s, int width, int height);
 /* Clipboard (text only). set_text offers local text to the remote; the
  * remote->local direction is pushed to the Mac pasteboard automatically. */
@@ -96,6 +103,9 @@ void* jr_view_create(void);
 void jr_view_destroy(void* view);
 void jr_view_set_frame(void* view, double x, double y, double width, double height);
 void jr_view_add_to_window(void* view, void* ns_window);
+/* Like jr_view_add_to_window, but leaves `top_inset` points free at the top
+ * (multi-device tab bar, V0.4). Autoresizing keeps the inset on resize. */
+void jr_view_add_to_window_inset(void* view, void* ns_window, double top_inset);
 void jr_view_remove_from_window(void* view);
 void jr_view_set_fill(void* view, uint8_t r, uint8_t g, uint8_t b);
 /* Attach a live session for input forwarding (NULL to detach; synchronous). */

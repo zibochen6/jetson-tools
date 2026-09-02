@@ -111,6 +111,11 @@ extern "C" {
     pub fn jr_view_destroy(view: *mut c_void);
     pub fn jr_view_set_frame(view: *mut c_void, x: c_double, y: c_double, w: c_double, h: c_double);
     pub fn jr_view_add_to_window(view: *mut c_void, ns_window: *mut c_void);
+    pub fn jr_view_add_to_window_inset(
+        view: *mut c_void,
+        ns_window: *mut c_void,
+        top_inset: c_double,
+    );
     pub fn jr_view_remove_from_window(view: *mut c_void);
     pub fn jr_view_set_fill(view: *mut c_void, r: u8, g: u8, b: u8);
     pub fn jr_view_attach_input(view: *mut c_void, session: *mut c_void);

@@ -56,6 +56,12 @@ export interface ProvisionOptions {
 export interface LaunchOptions {
   scenario?: MockScenario;
   signal?: AbortSignal;
+  /**
+   * Multi-device (V0.4): key the desktop session under this id (usually
+   * `username@host`) so several Jetsons can stay connected at once. Backends
+   * that predate multi-session ignore it.
+   */
+  sessionId?: string;
 }
 
 /**

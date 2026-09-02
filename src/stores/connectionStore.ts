@@ -77,6 +77,13 @@ export interface ConnectionStore {
   closeDesktop: () => Promise<void>;
   disconnect: () => Promise<void>;
   refreshRdpStatus: () => Promise<void>;
+  /**
+   * Multi-device (V0.4): the just-opened desktop was registered with the
+   * sessions store — reset the wizard to idle WITHOUT closing the desktop.
+   * Only used by the app shell (real backend); injected-store tests never
+   * call it.
+   */
+  handoff: () => void;
 }
 
 export const initialForm: ConnectionForm = {
@@ -381,7 +388,9 @@ export function createConnectionStore(
             username: form.username,
             password: form.password,
           },
-          { scenario: get().scenario },
+          // Keyed session (V0.4 multi-device): one desktop per device, quick
+          // switchable via the tab bar without reconnecting.
+          { scenario: get().scenario, sessionId: `${form.username}@${form.host}` },
         );
         set({
           state: "desktop_opened",
@@ -578,6 +587,23 @@ export function createConnectionStore(
       launchDesktop: () => launchDesktop(),
       closeDesktop: () => closeDesktop(),
       disconnect: () => disconnect(),
+      handoff: () => {
+        // The desktop stays alive under the sessions store's key; only the
+        // wizard resets (no service.close() — that would kill the desktop).
+        abort?.abort();
+        set({
+          state: "idle",
+          progress: null,
+          device: null,
+          environment: null,
+          error: null,
+          hostKey: null,
+          previousKey: null,
+          provisioningLocked: false,
+          rdpStatus: null,
+          lastFailure: null,
+        });
+      },
       refreshRdpStatus: () => refreshRdpStatus(),
     };
   });

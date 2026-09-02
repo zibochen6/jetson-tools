@@ -38,6 +38,16 @@ impl NativeView {
         unsafe { ffi::jr_view_add_to_window(self.handle, ns_window) };
     }
 
+    /// Mount the view filling the window EXCEPT a `top_inset`-point strip at
+    /// the top, which stays free for the webview tab bar (multi-device, V0.4).
+    /// Autoresizing keeps the inset intact across window resizes.
+    ///
+    /// # Safety
+    /// `ns_window` must be a live `NSWindow` (the Tauri main window).
+    pub unsafe fn add_to_window_inset(&self, ns_window: *mut c_void, top_inset: f64) {
+        unsafe { ffi::jr_view_add_to_window_inset(self.handle, ns_window, top_inset) };
+    }
+
     pub fn remove_from_window(&self) {
         unsafe { ffi::jr_view_remove_from_window(self.handle) };
     }

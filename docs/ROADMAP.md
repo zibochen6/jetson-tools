@@ -14,6 +14,7 @@
 - Clipboard 改进
 
 ## V0.4 — 集成工具
+- ~~多设备管理（同时连接多台 + Tab 快速切换，不重连）~~ ✅ 已交付（2026-09-02）
 - Integrated Terminal
 - SFTP File Browser
 

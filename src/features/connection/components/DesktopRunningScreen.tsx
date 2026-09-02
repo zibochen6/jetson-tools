@@ -20,15 +20,19 @@ export function DesktopRunningScreen() {
   return (
     <div className="mx-auto flex h-full max-w-sm flex-col items-center justify-center text-center">
       <span
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-2xl text-blue-600 dark:bg-blue-900/40 dark:text-blue-400"
+        className="flex h-14 w-14 items-center justify-center rounded-full bg-sky-500/10 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400"
         aria-hidden
       >
-        ▣
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
       </span>
-      <h2 className="mt-3 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+      <h2 className="mt-4 flex items-center gap-2.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
         Desktop open
+        <span className="jr-dot-live inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
       </h2>
-      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
         The Jetson desktop is showing in its own window.
       </p>
       {device && (
@@ -36,7 +40,7 @@ export function DesktopRunningScreen() {
           <DeviceCard device={device} />
         </div>
       )}
-      <div className="mt-6 flex gap-3">
+      <div className="mt-7 flex gap-3">
         <Button variant="secondary" onClick={() => void closeDesktop()}>
           Close Desktop
         </Button>

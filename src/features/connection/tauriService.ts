@@ -210,16 +210,23 @@ export class TauriConnectionService implements ConnectionService {
     opts: LaunchOptions = {},
   ): Promise<RdpLaunchResult> {
     if (opts.signal?.aborted) throw abortied();
+    const request = {
+      // The backend routes the RDP plane through the in-app loopback
+      // tunnel (KI-021); the typed host is kept for identity only.
+      host: input.host,
+      username: input.username,
+      password: input.password || null,
+    };
     try {
-      return await invoke<RdpLaunchResult>("launch_remote_desktop", {
-        request: {
-          // The backend routes the RDP plane through the in-app loopback
-          // tunnel (KI-021); the typed host is kept for identity only.
-          host: input.host,
-          username: input.username,
-          password: input.password || null,
-        },
-      });
+      // Multi-device (V0.4): a sessionId routes to the keyed session manager;
+      // without one the legacy single-desktop command is used unchanged.
+      if (opts.sessionId) {
+        return await invoke<RdpLaunchResult>("launch_session", {
+          sessionId: opts.sessionId,
+          request,
+        });
+      }
+      return await invoke<RdpLaunchResult>("launch_remote_desktop", { request });
     } catch (err) {
       if (opts.signal?.aborted) throw abortied();
       throw mapError(err);
@@ -258,4 +265,59 @@ export async function networkProbe(
   port: number,
 ): Promise<NetworkProbe> {
   return invoke<NetworkProbe>("network_probe", { host, port });
+}
+/* ------------------------------------------------------------------ */
+/* Multi-device sessions (V0.4)                                       */
+/* ------------------------------------------------------------------ */
+
+/** One row of `all_session_statuses` (camelCase mirrors Rust serde). */
+export interface SessionStatusEntry {
+  sessionId: string;
+  status: RdpStatus;
+}
+
+/**
+ * Session-scoped desktop control for the multi-device tab bar. Every call is
+ * best-effort outside Tauri (plain browser dev degrades to no-ops instead of
+ * throwing, same policy as `lib/ipc.ts`).
+ */
+export class TauriSessionService {
+  /** Re-open/relaunch one device's desktop under its session key. */
+  async launch(sessionId: string, input: RdpLaunchInput): Promise<RdpLaunchResult> {
+    try {
+      return await invoke<RdpLaunchResult>("launch_session", {
+        sessionId,
+        request: {
+          host: input.host,
+          username: input.username,
+          password: input.password || null,
+        },
+      });
+    } catch (err) {
+      throw mapError(err);
+    }
+  }
+
+  /** Quick-switch the on-screen desktop; `null` shows the webview home. */
+  async focus(sessionId: string | null): Promise<void> {
+    try {
+      await invoke("focus_session", { sessionId });
+    } catch {
+      // outside Tauri / transient — UI state stays authoritative
+    }
+  }
+
+  /** Close one device's session (tab ×). */
+  async close(sessionId: string): Promise<void> {
+    try {
+      await invoke("close_session", { sessionId });
+    } catch {
+      // best-effort: the tab is removed either way
+    }
+  }
+
+  /** Snapshot of every backend session (tab-bar polling). */
+  async allStatuses(): Promise<SessionStatusEntry[]> {
+    return invoke<SessionStatusEntry[]>("all_session_statuses");
+  }
 }

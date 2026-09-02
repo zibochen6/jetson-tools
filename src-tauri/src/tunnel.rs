@@ -14,6 +14,7 @@
 //! 0700 directory (never argv); the directory is removed when the tunnel dies.
 //! The tunnel lives for the app process lifetime and is killed on exit.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
 use std::net::{TcpListener, TcpStream};
@@ -58,9 +59,6 @@ pub enum TunnelError {
 struct ActiveTunnel {
     child: Child,
     endpoints: TunnelEndpoints,
-    host: String,
-    username: String,
-    remote_ssh_port: u16,
     /// 0700 dir holding the askpass helper + password file; removed on drop.
     dir: PathBuf,
 }
@@ -73,10 +71,18 @@ impl Drop for ActiveTunnel {
     }
 }
 
-/// Single in-app tunnel, shared by the SSH control plane and the RDP plane.
+/// One tunnel per remote device (multi-device support, V0.4), keyed by
+/// `username@host:remote_ssh_port`. Each tunnel gets its own loopback ports
+/// (preferred ports for the first one, ephemeral for the rest), so several
+/// Jetsons can be connected simultaneously. Tunnels live for the app process
+/// lifetime and are all killed on exit.
 #[derive(Clone, Default)]
 pub struct TunnelManager {
-    inner: Arc<Mutex<Option<ActiveTunnel>>>,
+    inner: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
+}
+
+fn tunnel_key(host: &str, remote_ssh_port: u16, username: &str) -> String {
+    format!("{username}@{host}:{remote_ssh_port}")
 }
 
 impl TunnelManager {
@@ -85,10 +91,10 @@ impl TunnelManager {
         Self::default()
     }
 
-    /// Terminate the tunnel (app exit). Idempotent.
+    /// Terminate every tunnel (app exit). Idempotent.
     pub fn close_all(&self) {
         let mut guard = self.inner.lock().unwrap();
-        *guard = None; // Drop kills the child and removes the secret files.
+        guard.clear(); // Drop kills each child and removes its secret files.
     }
 
     /// Ensure a tunnel to `host` exists and return the loopback endpoints.
@@ -111,25 +117,25 @@ impl TunnelManager {
             });
         }
 
+        let key = tunnel_key(host, remote_ssh_port, username);
         let mut guard = self.inner.lock().unwrap();
-        if let Some(t) = guard.as_mut() {
-            let same_target =
-                t.host == host && t.username == username && t.remote_ssh_port == remote_ssh_port;
-            if same_target && is_healthy(t) {
+        if let Some(t) = guard.get_mut(&key) {
+            if is_healthy(t) {
                 eprintln!(
                     "[jr-flow] tunnel reuse {}:{} / {}:{}",
                     t.endpoints.host, t.endpoints.ssh_port, t.endpoints.host, t.endpoints.rdp_port
                 );
                 return Ok(t.endpoints.clone());
             }
-            // Stale or different target: drop kills the old child + files.
-            *guard = None;
+            // Stale tunnel for this device: drop kills the child + files;
+            // tunnels to OTHER devices are untouched (multi-device, V0.4).
+            guard.remove(&key);
         }
 
         eprintln!("[jr-flow] tunnel spawn host={host} user={username}");
         let tunnel = spawn_tunnel(app, host, remote_ssh_port, username, password)?;
         let endpoints = tunnel.endpoints.clone();
-        *guard = Some(tunnel);
+        guard.insert(key, tunnel);
         Ok(endpoints)
     }
 }
@@ -327,9 +333,6 @@ fn spawn_tunnel(
                             ssh_port,
                             rdp_port,
                         },
-                        host: host.to_string(),
-                        username: username.to_string(),
-                        remote_ssh_port,
                         dir,
                     });
                 }

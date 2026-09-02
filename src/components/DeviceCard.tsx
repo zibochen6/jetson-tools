@@ -1,5 +1,9 @@
 import { JetsonDevice } from "../features/connection/types";
 
+/**
+ * Adapted from catalog component #5 (Feature Card): icon chip + title +
+ * metadata, hover lift. Props unchanged from the original component.
+ */
 export function DeviceCard({ device }: { device: JetsonDevice }) {
   const details = [
     device.model,
@@ -10,15 +14,26 @@ export function DeviceCard({ device }: { device: JetsonDevice }) {
   ].filter((v): v is string => Boolean(v));
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left dark:border-zinc-700 dark:bg-zinc-800">
-      <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-        {device.hostname ?? device.host}
-      </div>
-      {details.length > 0 && (
-        <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          {details.join(" · ")}
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left shadow-none transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-900/5 dark:border-slate-700/70 dark:bg-slate-800/60 dark:hover:border-slate-600 dark:hover:shadow-black/30">
+      <span
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400"
+        aria-hidden
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+          {device.hostname ?? device.host}
         </div>
-      )}
+        {details.length > 0 && (
+          <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+            {details.join(" · ")}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

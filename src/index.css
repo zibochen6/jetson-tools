@@ -1,11 +1,25 @@
 @import "tailwindcss";
 
+/* ===== Jetson Remote — Ocean Dark design tokens ===== */
 :root {
+  color-scheme: light dark;
+  --jr-bg: #f4f6fb;
+  --jr-glow-1: rgba(14, 165, 233, 0.09);
+  --jr-glow-2: rgba(168, 85, 247, 0.07);
+
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Noto Sans SC", Roboto, Helvetica, Arial, sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jr-bg: #0b1220;
+    --jr-glow-1: rgba(14, 165, 233, 0.13);
+    --jr-glow-2: rgba(168, 85, 247, 0.1);
+  }
 }
 
 html,
@@ -19,4 +33,108 @@ body {
   /* Let the OS resolve light/dark; surfaces are styled per-component. */
   user-select: none;
   cursor: default;
+}
+
+/* App background: base color + two restrained radial glows (the only
+   gradients in the whole UI — see anti-patterns: max 1-2 per page). */
+.jr-bg {
+  background:
+    radial-gradient(640px 420px at 12% -8%, var(--jr-glow-1), transparent 62%),
+    radial-gradient(720px 520px at 108% 112%, var(--jr-glow-2), transparent 62%),
+    var(--jr-bg);
+}
+
+/* ===== Motion ===== */
+
+/* Screen / block entrance */
+@keyframes jr-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.jr-enter {
+  animation: jr-fade-up 0.32s ease-out both;
+}
+.jr-enter-slow {
+  animation: jr-fade-up 0.45s ease-out both;
+}
+
+/* Live status dot pulse */
+@keyframes jr-ping {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 7px rgba(34, 197, 94, 0);
+  }
+}
+.jr-dot-live {
+  animation: jr-ping 1.8s ease-out infinite;
+}
+
+/* Indeterminate progress bar */
+@keyframes jr-slide {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+.jr-indeterminate {
+  animation: jr-slide 1.4s ease-in-out infinite;
+}
+
+/* Soft breathing glow behind the provisioning spinner */
+@keyframes jr-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 24px 2px rgba(14, 165, 233, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 34px 6px rgba(14, 165, 233, 0.3);
+  }
+}
+.jr-breathe {
+  animation: jr-breathe 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jr-enter,
+  .jr-enter-slow,
+  .jr-dot-live,
+  .jr-indeterminate,
+  .jr-breathe {
+    animation: none;
+  }
+}
+
+/* ===== Chrome polish ===== */
+
+::selection {
+  background: rgba(14, 165, 233, 0.28);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type="checkbox"] {
+  accent-color: #0ea5e9;
 }

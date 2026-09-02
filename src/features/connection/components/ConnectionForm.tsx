@@ -3,10 +3,12 @@ import { Button } from "../../../components/Button";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { validateConnectionForm } from "../validation";
 
+/** Catalog-style input (adapted #14): subtle surface, focus ring in accent. */
 const inputCls =
-  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 " +
-  "placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 " +
-  "dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100";
+  "w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 " +
+  "placeholder:text-slate-400 transition-all duration-150 " +
+  "focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/25 " +
+  "dark:border-slate-600/70 dark:bg-slate-900/50 dark:text-slate-100 dark:placeholder:text-slate-500";
 
 function Field({
   label,
@@ -23,13 +25,13 @@ function Field({
     <div>
       <label
         htmlFor={htmlFor}
-        className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
+        className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"
       >
         {label}
       </label>
       {children}
       {error && (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>
+        <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{error}</p>
       )}
     </div>
   );
@@ -107,14 +109,14 @@ export function ConnectionForm() {
             type="button"
             tabIndex={-1}
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute inset-y-0 right-2 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+            className="absolute inset-y-0 right-3 text-xs font-medium text-slate-400 transition-colors duration-150 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
           >
             {showPassword ? "Hide" : "Show"}
           </button>
         </div>
       </Field>
 
-      <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 transition-colors duration-150 hover:text-slate-800 dark:text-slate-300 dark:hover:text-slate-100">
         <input
           type="checkbox"
           checked={form.remember}
@@ -124,7 +126,7 @@ export function ConnectionForm() {
       </label>
 
       {usingSavedPassword && (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Leaving the password blank signs in with the password saved on this Mac.
         </p>
       )}

@@ -61,12 +61,12 @@ export function UpdateChecker({ currentVersion }: { currentVersion: string }) {
   }
 
   return (
-    <span className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500">
+    <span className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
       <span>v{currentVersion}</span>
       {phase === "idle" && (
         <button
           onClick={() => void onCheck()}
-          className="rounded border border-zinc-300 px-1.5 py-0.5 text-zinc-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-600 dark:text-zinc-400 dark:hover:text-indigo-400"
+          className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-500 transition-colors hover:border-sky-400 hover:text-sky-600 dark:border-slate-600 dark:text-slate-400 dark:hover:text-sky-400"
         >
           检查更新
         </button>
@@ -81,18 +81,18 @@ export function UpdateChecker({ currentVersion }: { currentVersion: string }) {
       )}
       {phase === "available" && (
         <>
-          <span className="text-indigo-600 dark:text-indigo-400">新版本 v{latest}</span>
+          <span className="text-sky-600 dark:text-sky-400">新版本 v{latest}</span>
           {bundled ? (
             <button
               onClick={() => void onInstall()}
-              className="rounded border border-indigo-400 px-1.5 py-0.5 text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950"
+              className="rounded border border-sky-400 px-1.5 py-0.5 text-sky-600 transition-colors hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950"
             >
               下载并安装
             </button>
           ) : (
             <button
               onClick={() => releaseUrl && void openUrl(releaseUrl)}
-              className="rounded border border-indigo-400 px-1.5 py-0.5 text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950"
+              className="rounded border border-sky-400 px-1.5 py-0.5 text-sky-600 transition-colors hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950"
             >
               打开下载页
             </button>
@@ -100,7 +100,7 @@ export function UpdateChecker({ currentVersion }: { currentVersion: string }) {
         </>
       )}
       {phase === "installing" && (
-        <span className="text-indigo-600 dark:text-indigo-400">下载更新中，完成后自动重启…</span>
+        <span className="text-sky-600 dark:text-sky-400">下载更新中，完成后自动重启…</span>
       )}
     </span>
   );
