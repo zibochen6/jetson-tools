@@ -288,11 +288,12 @@ mod tests {
     #[test]
     fn version_compare() {
         assert!(version_is_newer("0.1.0", "0.2.0"));
-        assert!(version_is_newer("0.2.0", "0.2.0")); // same -> false (equal not newer)
-        assert!(!version_is_newer("0.2.0", "0.2.0"));
+        assert!(!version_is_newer("0.2.0", "0.2.0")); // equal -> not newer
         assert!(version_is_newer("0.2.0", "0.10.0"));
         assert!(version_is_newer("0.2.0", "0.2.1"));
         assert!(!version_is_newer("0.2.1", "0.2.0"));
-        assert!(version_is_newer("1.0.0", "1.0.0-rc1"));
+        // prerelease suffix is stripped for comparison; a same-core rc is not newer
+        assert!(!version_is_newer("1.0.0", "1.0.0-rc1"));
+        assert!(version_is_newer("1.0.0", "1.0.1"));
     }
 }
