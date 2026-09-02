@@ -1,0 +1,5 @@
+# pnpm settings (read even for single-package projects).
+# Allow esbuild's postinstall so `pnpm run` auto-install checks do not trip on
+# ERR_PNPM_IGNORED_BUILDS (pnpm 11 schema).
+allowBuilds:
+  esbuild: true
