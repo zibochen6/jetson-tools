@@ -280,3 +280,19 @@ fn chrono_free() -> String {
         .unwrap_or(0);
     format!("{now}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::version_is_newer;
+
+    #[test]
+    fn version_compare() {
+        assert!(version_is_newer("0.1.0", "0.2.0"));
+        assert!(version_is_newer("0.2.0", "0.2.0")); // same -> false (equal not newer)
+        assert!(!version_is_newer("0.2.0", "0.2.0"));
+        assert!(version_is_newer("0.2.0", "0.10.0"));
+        assert!(version_is_newer("0.2.0", "0.2.1"));
+        assert!(!version_is_newer("0.2.1", "0.2.0"));
+        assert!(version_is_newer("1.0.0", "1.0.0-rc1"));
+    }
+}
