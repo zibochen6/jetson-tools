@@ -108,34 +108,12 @@ function abortied(): Error & { name: "AbortError" } {
 }
 
 /**
- * Dev affordance: override the SSH port. macOS won't let a non-root process
- * bind local :22, so an ssh tunnel forwarding the device's :22 has to land on
- * an unprivileged local port (e.g. 2222). Set `VITE_JR_SSH_PORT=2222` when
- * running `cargo tauri dev` against such a tunnel. Defaults to 22 in prod.
- *
- * Dev tunnel mode (KI-004): an unsigned/ad-hoc app binary is silently blocked
- * by macOS Local Network privacy (TCC) from opening LAN sockets, so when the
- * port override is active BOTH planes ride the loopback tunnel: the SSH
- * control plane goes to 127.0.0.1:<VITE_JR_SSH_PORT> and the RDP plane to
- * 127.0.0.1:<VITE_JR_RDP_PORT|3389>, regardless of the LAN IP the user typed.
- * The typed host is kept for device identity/display only.
+ * The frontend always sends the host the user typed; the Rust backend
+ * transparently routes BOTH planes through an in-app loopback ssh tunnel
+ * (system `/usr/bin/ssh`, KI-021) so unsigned builds are not blocked by
+ * macOS Local Network privacy (KI-004) and no manual `ssh -L` is needed.
  */
-const SSH_PORT_OVERRIDE = import.meta.env.VITE_JR_SSH_PORT
-  ? Number(import.meta.env.VITE_JR_SSH_PORT)
-  : null;
-const RDP_PORT_OVERRIDE = import.meta.env.VITE_JR_RDP_PORT
-  ? Number(import.meta.env.VITE_JR_RDP_PORT)
-  : null;
-
-export const TUNNEL_MODE = SSH_PORT_OVERRIDE !== null;
-const TUNNEL_HOST = "127.0.0.1";
-const SSH_PORT = SSH_PORT_OVERRIDE ?? 22;
-const DEFAULT_RDP_PORT = 3389;
-
-/** Dev-bar label for the active tunnel routing (null in prod/direct mode). */
-export const devTunnelLabel = TUNNEL_MODE
-  ? `${TUNNEL_HOST}:${SSH_PORT} / ${TUNNEL_HOST}:${RDP_PORT_OVERRIDE ?? DEFAULT_RDP_PORT}`
-  : null;
+const DEFAULT_SSH_PORT = 22;
 
 /**
  * Real SSH control plane. `connect` probes/detects; `prepare` checks the
@@ -153,8 +131,8 @@ export class TauriConnectionService implements ConnectionService {
     try {
       const result = await invoke<RustProbeResult>("probe_device", {
         input: {
-          host: TUNNEL_MODE ? TUNNEL_HOST : input.host,
-          port: SSH_PORT,
+          host: input.host,
+          port: DEFAULT_SSH_PORT,
           username: input.username,
           // Empty = the backend resolves the remembered password itself;
           // the stored secret never comes back to the frontend (V0.3).
@@ -196,8 +174,8 @@ export class TauriConnectionService implements ConnectionService {
     try {
       const result = await invoke<RustPrepareResult>("prepare_remote_desktop", {
         input: {
-          host: TUNNEL_MODE ? TUNNEL_HOST : input.host,
-          port: SSH_PORT,
+          host: input.host,
+          port: DEFAULT_SSH_PORT,
           username: input.username,
           password: input.password || null,
         },
@@ -235,11 +213,9 @@ export class TauriConnectionService implements ConnectionService {
     try {
       return await invoke<RdpLaunchResult>("launch_remote_desktop", {
         request: {
-          // In dev tunnel mode the RDP plane rides the loopback tunnel too
-          // (KI-004); otherwise the typed host is used and Rust defaults the
-          // port when `undefined` is dropped by JSON serialization.
-          host: TUNNEL_MODE ? TUNNEL_HOST : input.host,
-          port: TUNNEL_MODE ? (RDP_PORT_OVERRIDE ?? DEFAULT_RDP_PORT) : input.port,
+          // The backend routes the RDP plane through the in-app loopback
+          // tunnel (KI-021); the typed host is kept for identity only.
+          host: input.host,
           username: input.username,
           password: input.password || null,
         },

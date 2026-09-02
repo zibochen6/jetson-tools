@@ -55,7 +55,9 @@ impl NativeView {
     /// RDP input channel. Synchronous; pass `None` to detach (must happen
     /// before the session is destroyed).
     pub fn attach_input(&self, session: Option<*mut ffi::jr_session>) {
-        let ptr = session.map(|p| p as *mut c_void).unwrap_or(std::ptr::null_mut());
+        let ptr = session
+            .map(|p| p as *mut c_void)
+            .unwrap_or(std::ptr::null_mut());
         unsafe { ffi::jr_view_attach_input(self.handle, ptr) };
     }
 

@@ -134,17 +134,18 @@ describe("TauriConnectionService", () => {
     );
   });
 
-  it("dev tunnel mode routes SSH and RDP over loopback", async () => {
+  it("frontend always sends the typed host; tunnel routing is backend-side (KI-021)", async () => {
     vi.stubEnv("VITE_JR_SSH_PORT", "2222");
     vi.resetModules();
     try {
       const { TauriConnectionService: Svc } = await import("./tauriService");
-      invokeMock.mockResolvedValue({ kind: "opened" });
+      invokeMock.mockResolvedValue({ kind: "device", device: {} });
       await new Svc().connect(input, {});
       expect(invokeMock).toHaveBeenLastCalledWith("probe_device", {
-        input: { host: "127.0.0.1", port: 2222, username: "seeed", password: "pw" },
+        input: { host: "192.168.100.164", port: 22, username: "seeed", password: "pw" },
         hostKeyDecision: null,
       });
+      invokeMock.mockResolvedValue({ kind: "opened" });
       await new Svc().launch({
         host: "192.168.100.164",
         username: "seeed",
@@ -152,8 +153,7 @@ describe("TauriConnectionService", () => {
       });
       expect(invokeMock).toHaveBeenLastCalledWith("launch_remote_desktop", {
         request: {
-          host: "127.0.0.1",
-          port: 3389,
+          host: "192.168.100.164",
           username: "seeed",
           password: "pw",
         },
@@ -175,7 +175,6 @@ describe("TauriConnectionService", () => {
     expect(invokeMock).toHaveBeenCalledWith("launch_remote_desktop", {
       request: {
         host: "192.168.100.164",
-        port: undefined,
         username: "seeed",
         password: "pw",
       },
@@ -192,7 +191,6 @@ describe("TauriConnectionService", () => {
     expect(invokeMock).toHaveBeenCalledWith("launch_remote_desktop", {
       request: {
         host: "192.168.100.164",
-        port: undefined,
         username: "seeed",
         password: null,
       },

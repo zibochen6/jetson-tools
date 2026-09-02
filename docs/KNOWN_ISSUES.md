@@ -33,7 +33,7 @@
 - **候选路线**（待定）：① 正式签名（免费 Personal Team → Apple Development 证书，有 Team ID，弹窗正常、直连回归）；② 控制面改走系统 `ssh`（Apple 签名、免弹窗、隧道绕过 TCC，已有原型）。
 - **缓解（dev，已实现，2026-09-01）**：dev tunnel 模式——设置 `VITE_JR_SSH_PORT`（可选 `VITE_JR_RDP_PORT`，默认 3389）后，SSH 控制面与 RDP 面一律路由到 `127.0.0.1` 回环隧道，用户输入的 LAN IP 仅保留为设备标识/展示；底栏显示 `TUNNEL 127.0.0.1:<ssh> / 127.0.0.1:<rdp>` 徽标。配合 `ssh -L 2222:localhost:22 -L 3389:localhost:3389` 隧道，未签名 dev 二进制即可全链路连通（真机验证：SSH 握手/检测、embedded RDP 重连 :10 均通过；首连 127.0.0.1:<port> 会触发 TOFU 信任提示，属预期）。
 - **诊断工具**：`cargo run --bin network_probe -- <host> <port>`（原样透传 errno）；dev-only GUI 触发见 `DevNetworkProbe.tsx`。
-- **状态**：开放（P0 平台限制；dev 已可绕过，正式版待 Team ID 签名）。
+- **状态**：开放（P0 平台限制；0.2.1 起 release 由 app 自建环回隧道绕过（KI-021），不再依赖手动隧道；直连路线仍待 Team ID 签名）。
 
 ## KI-005 — apt 源域名受网络环境 fake-ip 影响
 - **现象**：`archive.ubuntu.com` 解析到 `198.18.1.69`（Clash fake-ip）。
@@ -118,8 +118,8 @@
 - **现象**：`cargo tauri dev` / ad-hoc 构建首次「记住设备」时，macOS 可能弹「jetson-remote 想要存取钥匙串中…」；重建二进制（身份变化）后可能再弹一次，用户需点「始终允许」。
 - **根因**：Keychain generic-password 条目 ACL 绑定创建者 app 的 codesign identity；未签名/临时构建 identity 每次变化（与 KI-004 同源的 TCC 身份态问题）。
 - **影响**：仅开发构建；正式签名包（`cargo tauri build` + 签名）身份稳定，不会重复弹。
-- **缓解**：dev 下首次弹窗点「始终允许」；或改用签名构建。
-- **状态**：待签名发布包复验（V0.3 功能本身不受影响）。
+- **缓解**：dev 下首次弹窗点「始终允许」；或改用签名构建。0.2.1 起密码存储改为 0600 文件（KI-020），Keychain 不再使用，本问题随之消失。
+- **状态**：✅ 已由 KI-020 方案消除（0.2.1）。
 
 ## KI-018 — RDP 指针 release 从未送达 X：拖窗/点击紊乱（已修复）
 
@@ -139,3 +139,26 @@
 - **端到端验证**（xclip/pbcopy 闭环）：远程 `printf|xclip` → Mac `pbpaste` 得 `REMOTE_HELLO_888` ✓；Mac `printf|pbcopy` → 设备 `xclip -o` 得 `MAC_TO_REMOTE_777` ✓。
 - **限制**：仅文本（CF_UNICODETEXT/CF_TEXT）；Mac→远程用 Ctrl+Shift+V，远程→Mac 用 Ctrl+Shift+C。
 - **状态**：已修复并双向真机验证（2026-09-02）。
+
+## KI-020 — ad-hoc 签名下 Keychain 每次启动弹授权密码（已修复，0.2.1）
+
+- **症状**：app 一打开（含自动重连前）macOS 弹「想要使用钥匙串中的机密信息」，要求输入登录密码「允许/始终允许」；ad-hoc/未签名构建下「始终允许」无法持久生效，每次启动都弹。
+- **根因**：V0.3「记住设备」把密码存 macOS Keychain；Keychain 条目 ACL 绑定创建者 app 的 codesign identity，ad-hoc 身份（无 Team ID）不被稳定信任 → 重复授权（与 KI-004 同源的平台身份问题）。
+- **修复**：`remember.rs` 以 `FileSecretStore` 替换 `KeychainSecretStore`：密码存 app 配置目录 `secrets.json`（目录 0700、文件 0600，原子写）；移除 `keyring` 依赖。任何签名状态下都不再弹窗。
+- **代价**：安全性从「Keychain ACL + 用户登录态」降为「POSIX 权限 + 用户登录态」；同机同用户进程可读。对本工具威胁模型可接受（等同 ~/.ssh 私钥文件的保护级别）。
+- **迁移**：旧 Keychain 条目不自动迁移（迁移本身会触发弹窗）；升级后首次需重输一次密码并勾选记住。
+- **状态**：✅ 已修复（0.2.1）。
+
+## KI-021 — release 依赖手动 ssh 隧道，未开隧道即 “Couldn't reach this Jetson”（已修复，0.2.1）
+
+- **症状**：v0.2.0 release 内嵌 `VITE_JR_SSH_PORT=2222` 路由，用户若没先在终端跑 `ssh -L 2222:localhost:22 -L 3389:localhost:3389 <user>@<jetson>`，app 连 127.0.0.1:2222 被拒 → 错误屏 “Couldn't reach this Jetson”。
+- **根因**：KI-004 的缓解方案把「建隧道」留给了用户。
+- **修复**：`tunnel.rs` — app 用系统 `/usr/bin/ssh`（Apple 签名、不受 TCC 限制）自建环回隧道：
+  - 密码仅经 0700 目录内 `SSH_ASKPASS` 脚本传递（`SSH_ASKPASS_REQUIRE=force`，不进 argv）；
+  - `-F /dev/null` + `accept-new` + 专用 known_hosts，不碰用户 ssh 配置；
+  - 本地端口优先 2222/3389（主机密钥信任库按 wire host:port 计，端口稳定不反复 TOFU），被占则临时端口；
+  - 端口开放后 3s 宽限检测 ssh 认证失败（`Permission denied` → auth_failed）；
+  - app 退出时收掉隧道进程并删除凭据文件（RunEvent::Exit + Drop 双保险）。
+  - 前端不再做端口路由，后端 probe/prepare/launch 统一走隧道；`VITE_JR_SSH_PORT` 编译期覆盖保留为 dev 复用外部隧道。
+- **验证**：askpass/认证失败分类/accept-new 本机实测；0.2.1 真机全自动 E2E 通过（启动无弹窗 → 自建隧道 2222/3389 → 自动重连认证成功 → 桌面开启 → 剪贴板通道握手完成）；孤儿隧道启动清理实测。
+- **状态**：✅ 已修复并真机验证（0.2.1）。

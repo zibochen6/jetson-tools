@@ -10,11 +10,12 @@ use crate::bootstrap::types::{
 use crate::bootstrap::verifier;
 use crate::device::detector::{self, DetectError, DetectOutcome};
 use crate::device::types::JetsonDevice;
-use crate::remember::{self, KeychainSecretStore, RememberError, RememberedDeviceStore};
+use crate::remember::{self, FileSecretStore, RememberError, RememberedDeviceStore};
 use crate::ssh::client as ssh;
 use crate::ssh::error::SshError;
 use crate::ssh::types::{HostKeyInfo, SshConfig, SshConnectionInput};
 use crate::trust::TrustStoreFile;
+use crate::tunnel::{TunnelEndpoints, TunnelError, TunnelManager};
 
 /// User's answer to a host-key prompt. Carries the full key so we can persist
 /// algorithm + fingerprint, not just a bare fingerprint.
@@ -97,12 +98,12 @@ impl From<RememberError> for ProbeError {
 }
 
 /// Resolve the SSH password: a typed password wins, otherwise fall back to the
-/// remembered one in the OS keychain (V0.3 auto-reconnect). The fallback
-/// resolves the Keychain account from remembered.json so dev-tunnel mode
-/// (wire host rewritten to loopback, KI-004) still finds the stored secret.
+/// remembered one in the OS secret store (V0.3 auto-reconnect). The fallback
+/// resolves the secret-store account from remembered.json so tunnel mode
+/// (wire host rewritten to loopback, KI-021) still finds the stored secret.
 fn resolve_ssh_password(
     app: &AppHandle,
-    secrets: &KeychainSecretStore,
+    secrets: &FileSecretStore,
     input: &SshConnectionInput,
 ) -> Result<String, ProbeError> {
     let store = RememberedDeviceStore::for_app(app)
@@ -120,12 +121,22 @@ fn resolve_ssh_password(
 #[tauri::command]
 pub async fn probe_device(
     app: AppHandle,
-    secrets: State<'_, KeychainSecretStore>,
+    secrets: State<'_, FileSecretStore>,
+    tunnels: State<'_, TunnelManager>,
     input: SshConnectionInput,
     host_key_decision: Option<HostKeyDecision>,
 ) -> Result<ProbeResult, ProbeError> {
-    eprintln!("[jr-flow] probe start host={} port={} user={}", input.host, input.port, input.username);
+    eprintln!(
+        "[jr-flow] probe start host={} port={} user={}",
+        input.host, input.port, input.username
+    );
     let password = resolve_ssh_password(&app, &secrets, &input)?;
+    // The app carries its own loopback tunnel (system ssh, KI-021); both
+    // planes connect to the returned endpoints instead of the LAN host.
+    let endpoints = ensure_tunnel(&tunnels, &app, &input, &password).await?;
+    let mut wire = input.clone();
+    wire.host = endpoints.host.clone();
+    wire.port = endpoints.ssh_port;
     let config = SshConfig::default();
     let config_dir = app
         .path()
@@ -145,26 +156,26 @@ pub async fn probe_device(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    // 2. Ephemeral connect with TOFU host-key verification.
+    // 2. Ephemeral connect with TOFU host-key verification (wire endpoint).
     eprintln!("[jr-flow] probe connecting...");
-    let expected = store.get_fingerprint(&input.host, input.port);
-    let mut session = match ssh::connect(&input, expected.as_deref(), &config).await {
+    let expected = store.get_fingerprint(&wire.host, wire.port);
+    let mut session = match ssh::connect(&wire, expected.as_deref(), &config).await {
         Ok(ssh::SshConnectOutcome::Connected(s)) => s,
         Ok(ssh::SshConnectOutcome::HostKeyUnknown(key)) => {
             return Ok(ProbeResult::HostKeyUnknown { key });
         }
         Ok(ssh::SshConnectOutcome::HostKeyChanged { current, expected }) => {
             let previous = store
-                .get(&input.host, input.port)
+                .get(&wire.host, wire.port)
                 .map(|h| HostKeyInfo {
-                    host: input.host.clone(),
-                    port: input.port,
+                    host: wire.host.clone(),
+                    port: wire.port,
                     algorithm: h.algorithm,
                     fingerprint: h.fingerprint,
                 })
                 .unwrap_or_else(|| HostKeyInfo {
-                    host: input.host.clone(),
-                    port: input.port,
+                    host: wire.host.clone(),
+                    port: wire.port,
                     algorithm: "unknown".into(),
                     fingerprint: expected,
                 });
@@ -175,12 +186,12 @@ pub async fn probe_device(
 
     // 3. Authenticate.
     session
-        .authenticate_password(&input.username, &password)
+        .authenticate_password(&wire.username, &password)
         .await
         .map_err(map_ssh_error)?;
     eprintln!("[jr-flow] probe authenticated");
 
-    // 4. Detect.
+    // 4. Detect (device identity keeps the LAN host the user typed).
     let outcome = detector::detect(&mut session)
         .await
         .map_err(map_detect_error)?;
@@ -230,6 +241,43 @@ fn map_detect_error(e: DetectError) -> ProbeError {
     }
 }
 
+fn map_tunnel_error(e: TunnelError) -> ProbeError {
+    match e {
+        TunnelError::AuthFailed => ProbeError::new(
+            ProbeErrorCode::AuthenticationFailed,
+            "Authentication failed",
+        ),
+        TunnelError::Unreachable => {
+            ProbeError::new(ProbeErrorCode::SshTimeout, "Could not reach the device")
+        }
+        TunnelError::Setup(m) => {
+            ProbeError::new(ProbeErrorCode::Unknown, format!("Secure tunnel: {m}"))
+        }
+    }
+}
+
+/// Establish (or reuse) the in-app loopback tunnel off the async runtime —
+/// spawning ssh + polling ports is blocking work.
+async fn ensure_tunnel(
+    tunnels: &TunnelManager,
+    app: &AppHandle,
+    input: &SshConnectionInput,
+    password: &str,
+) -> Result<TunnelEndpoints, ProbeError> {
+    let manager = tunnels.clone();
+    let app = app.clone();
+    let host = input.host.clone();
+    let username = input.username.clone();
+    let remote_port = input.port;
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || {
+        manager.ensure(&app, &host, remote_port, &username, &password)
+    })
+    .await
+    .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("tunnel task: {e}")))?
+    .map_err(map_tunnel_error)
+}
+
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PrepareResult {
@@ -252,13 +300,21 @@ pub enum PrepareResult {
 #[tauri::command]
 pub async fn prepare_remote_desktop(
     app: AppHandle,
-    secrets: State<'_, KeychainSecretStore>,
+    secrets: State<'_, FileSecretStore>,
+    tunnels: State<'_, TunnelManager>,
     input: SshConnectionInput,
     host_key_decision: Option<HostKeyDecision>,
     on_event: tauri::ipc::Channel<ProvisionEvent>,
 ) -> Result<PrepareResult, ProbeError> {
-    eprintln!("[jr-flow] prepare start host={} port={} user={}", input.host, input.port, input.username);
+    eprintln!(
+        "[jr-flow] prepare start host={} port={} user={}",
+        input.host, input.port, input.username
+    );
     let password = resolve_ssh_password(&app, &secrets, &input)?;
+    let endpoints = ensure_tunnel(&tunnels, &app, &input, &password).await?;
+    let mut wire = input.clone();
+    wire.host = endpoints.host.clone();
+    wire.port = endpoints.ssh_port;
     let config = SshConfig::default();
     let config_dir = app
         .path()
@@ -277,24 +333,24 @@ pub async fn prepare_remote_desktop(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    let expected = store.get_fingerprint(&input.host, input.port);
-    let mut session = match ssh::connect(&input, expected.as_deref(), &config).await {
+    let expected = store.get_fingerprint(&wire.host, wire.port);
+    let mut session = match ssh::connect(&wire, expected.as_deref(), &config).await {
         Ok(ssh::SshConnectOutcome::Connected(s)) => s,
         Ok(ssh::SshConnectOutcome::HostKeyUnknown(key)) => {
             return Ok(PrepareResult::HostKeyUnknown { key });
         }
         Ok(ssh::SshConnectOutcome::HostKeyChanged { current, expected }) => {
             let previous = store
-                .get(&input.host, input.port)
+                .get(&wire.host, wire.port)
                 .map(|h| HostKeyInfo {
-                    host: input.host.clone(),
-                    port: input.port,
+                    host: wire.host.clone(),
+                    port: wire.port,
                     algorithm: h.algorithm,
                     fingerprint: h.fingerprint,
                 })
                 .unwrap_or_else(|| HostKeyInfo {
-                    host: input.host.clone(),
-                    port: input.port,
+                    host: wire.host.clone(),
+                    port: wire.port,
                     algorithm: "unknown".into(),
                     fingerprint: expected,
                 });
@@ -304,7 +360,7 @@ pub async fn prepare_remote_desktop(
     };
 
     session
-        .authenticate_password(&input.username, &password)
+        .authenticate_password(&wire.username, &password)
         .await
         .map_err(map_ssh_error)?;
 

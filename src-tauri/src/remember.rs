@@ -3,12 +3,14 @@
 //! Security split (PRD §29 / §67, ADR-006):
 //! - Non-secret device identity (host + username) lives in `remembered.json`
 //!   under the app config dir.
-//! - The password lives ONLY in the OS secret store (macOS Keychain), keyed by
-//!   service + account. It is never written to a plain file and never leaves
-//!   this module as part of any serializable struct.
+//! - The password lives ONLY in the OS secret store, keyed by service +
+//!   account. It never leaves this module as part of any serializable struct.
 //!
 //! `SecretStore` is a trait so unit tests inject an in-memory fake; the
-//! production implementation wraps `keyring` (Apple-native Keychain).
+//! production implementation is a 0600 JSON file in the app config dir
+//! (KI-020): the macOS Keychain was dropped because ad-hoc/unsigned builds
+//! have no stable Keychain ACL identity, so macOS re-prompted for the login
+//! password on every launch.
 
 use std::fs;
 use std::io::Write;
@@ -17,8 +19,15 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-/// Keychain service name for the remembered device's password.
-pub const KEYCHAIN_SERVICE: &str = "com.jetsonremote.app.remembered-device";
+/// Service name scoping the remembered device's password in the secret store.
+pub const SECRET_SERVICE: &str = "com.jetsonremote.app.remembered-device";
+
+/// App Support directory name; mirrors the bundle identifier in
+/// `tauri.conf.json` (the store is constructed before an AppHandle exists).
+const APP_SUPPORT_DIR: &str = "com.jetsonremote.app";
+
+/// File name of the secret store inside the app config dir.
+const SECRETS_FILE_NAME: &str = "secrets.json";
 
 /// File name inside the app config dir holding the non-secret device identity.
 pub const FILE_NAME: &str = "remembered.json";
@@ -32,9 +41,9 @@ pub struct RememberedDevice {
 }
 
 impl RememberedDevice {
-    /// Keychain account derived from device identity; unique per device so
-    /// a device list could be supported later without a schema change.
-    pub fn keychain_account(&self) -> String {
+    /// Secret-store account derived from device identity; unique per device
+    /// so a device list could be supported later without a schema change.
+    pub fn account(&self) -> String {
         format!("{}@{}", self.username, self.host)
     }
 }
@@ -81,8 +90,8 @@ impl RememberedDeviceStore {
         if let Some(dir) = self.file.parent() {
             fs::create_dir_all(dir).map_err(|e| RememberError::Io(e.to_string()))?;
         }
-        let bytes = serde_json::to_vec(device)
-            .map_err(|e| RememberError::Io(format!("serialize: {e}")))?;
+        let bytes =
+            serde_json::to_vec(device).map_err(|e| RememberError::Io(format!("serialize: {e}")))?;
         let tmp = self.file.with_extension("json.tmp");
         {
             let mut f = fs::File::create(&tmp)
@@ -92,8 +101,7 @@ impl RememberedDeviceStore {
             f.sync_all()
                 .map_err(|e| RememberError::Io(format!("sync tmp: {e}")))?;
         }
-        fs::rename(&tmp, &self.file)
-            .map_err(|e| RememberError::Io(format!("rename: {e}")))?;
+        fs::rename(&tmp, &self.file).map_err(|e| RememberError::Io(format!("rename: {e}")))?;
         Ok(())
     }
 
@@ -107,7 +115,7 @@ impl RememberedDeviceStore {
     }
 }
 
-/// Secret-storage abstraction: production = OS keychain, tests = in-memory.
+/// Secret-storage abstraction: production = 0600 file (KI-020), tests = in-memory.
 pub trait SecretStore: Send + Sync {
     /// Stored secret, or None when absent (or unreadable).
     fn get(&self, service: &str, account: &str) -> Option<String>;
@@ -115,63 +123,100 @@ pub trait SecretStore: Send + Sync {
     fn delete(&self, service: &str, account: &str) -> Result<(), RememberError>;
 }
 
-#[cfg(target_os = "macos")]
-fn secret_err(e: keyring::Error) -> RememberError {
-    RememberError::Secret(e.to_string())
+/// Production backend: a 0600 JSON file in the app config dir. Never prompts
+/// (KI-020) and behaves identically for signed and ad-hoc builds. Non-unix
+/// platforms get the same implementation; only the chmod is unix-specific.
+#[derive(Debug, Default)]
+pub struct FileSecretStore;
+
+impl FileSecretStore {
+    /// `~/Library/Application Support/<bundle id>/secrets.json` on macOS.
+    /// `JR_SECRETS_FILE` overrides the location (tests).
+    fn file_path() -> Result<PathBuf, RememberError> {
+        if let Ok(p) = std::env::var("JR_SECRETS_FILE") {
+            if !p.is_empty() {
+                return Ok(PathBuf::from(p));
+            }
+        }
+        let home = std::env::var_os("HOME")
+            .filter(|h| !h.is_empty())
+            .ok_or_else(|| RememberError::Secret("HOME is not set".into()))?;
+        Ok(PathBuf::from(home)
+            .join("Library/Application Support")
+            .join(APP_SUPPORT_DIR)
+            .join(SECRETS_FILE_NAME))
+    }
+
+    fn load_map(
+        path: &PathBuf,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
+        let Ok(bytes) = fs::read(path) else {
+            return Default::default();
+        };
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+
+    fn save_map(
+        path: &PathBuf,
+        map: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    ) -> Result<(), RememberError> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)
+                .map_err(|e| RememberError::Secret(format!("create dir: {e}")))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+            }
+        }
+        let bytes = serde_json::to_vec(map)
+            .map_err(|e| RememberError::Secret(format!("serialize: {e}")))?;
+        let tmp = path.with_extension("json.tmp");
+        {
+            let f = fs::File::create(&tmp)
+                .map_err(|e| RememberError::Secret(format!("create: {e}")))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+            }
+            let mut f = f;
+            f.write_all(&bytes)
+                .map_err(|e| RememberError::Secret(format!("write: {e}")))?;
+            f.sync_all()
+                .map_err(|e| RememberError::Secret(format!("sync: {e}")))?;
+        }
+        fs::rename(&tmp, path).map_err(|e| RememberError::Secret(format!("rename: {e}")))?;
+        Ok(())
+    }
 }
 
-/// Production macOS backend via the `keyring` crate (Apple Keychain).
-/// Non-macOS builds get the no-op fallback below: auto-reconnect degrades
-/// gracefully to "type the password" instead of breaking.
-#[cfg(target_os = "macos")]
-#[derive(Debug, Default)]
-pub struct KeychainSecretStore;
-
-#[cfg(target_os = "macos")]
-impl SecretStore for KeychainSecretStore {
+impl SecretStore for FileSecretStore {
     fn get(&self, service: &str, account: &str) -> Option<String> {
-        let entry = keyring::Entry::new(service, account).ok()?;
-        match entry.get_password() {
-            Ok(pw) => Some(pw),
-            Err(keyring::Error::NoEntry) => None,
-            // Any other failure degrades to "no stored password": the user can
-            // still type the password, so surfacing an error adds no value.
-            Err(_) => None,
-        }
+        let path = Self::file_path().ok()?;
+        Self::load_map(&path)
+            .get(service)
+            .and_then(|m| m.get(account))
+            .cloned()
     }
 
     fn set(&self, service: &str, account: &str, secret: &str) -> Result<(), RememberError> {
-        let entry = keyring::Entry::new(service, account).map_err(secret_err)?;
-        entry.set_password(secret).map_err(secret_err)
+        let path = Self::file_path()?;
+        let mut map = Self::load_map(&path);
+        map.entry(service.to_string())
+            .or_default()
+            .insert(account.to_string(), secret.to_string());
+        Self::save_map(&path, &map)
     }
 
     fn delete(&self, service: &str, account: &str) -> Result<(), RememberError> {
-        let entry = keyring::Entry::new(service, account).map_err(secret_err)?;
-        match entry.delete_credential() {
-            Ok(()) => Ok(()),
-            // Idempotent by design — forgetting twice is not an error.
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(secret_err(e)),
+        let path = Self::file_path()?;
+        let mut map = Self::load_map(&path);
+        if let Some(m) = map.get_mut(service) {
+            m.remove(account);
         }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[derive(Debug, Default)]
-pub struct KeychainSecretStore;
-
-#[cfg(not(target_os = "macos"))]
-impl SecretStore for KeychainSecretStore {
-    fn get(&self, _service: &str, _account: &str) -> Option<String> {
-        None
-    }
-
-    fn set(&self, _service: &str, _account: &str, _secret: &str) -> Result<(), RememberError> {
-        Ok(())
-    }
-
-    fn delete(&self, _service: &str, _account: &str) -> Result<(), RememberError> {
-        Ok(())
+        // Idempotent by design — forgetting twice is not an error.
+        Self::save_map(&path, &map)
     }
 }
 
@@ -179,10 +224,10 @@ impl SecretStore for KeychainSecretStore {
 /// always wins; an empty/missing one falls back to the OS secret store for the
 /// remembered device.
 ///
-/// The Keychain account comes from `remembered.json`, NOT from the wire host:
-/// in dev tunnel mode the wire host is loopback while the stored identity is
-/// the LAN host the user typed. The single remembered device is the source of
-/// truth (KI-004 tunnel workaround, V0.3).
+/// The secret-store account comes from `remembered.json`, NOT from the wire
+/// host: the wire host may be loopback (in-app tunnel, KI-021) while the
+/// stored identity is the LAN host the user typed. The single remembered
+/// device is the source of truth.
 pub fn resolve_password(
     remembered: &RememberedDeviceStore,
     secrets: &dyn SecretStore,
@@ -203,7 +248,7 @@ pub fn resolve_password(
         return Err(RememberError::Missing);
     }
     secrets
-        .get(KEYCHAIN_SERVICE, &device.keychain_account())
+        .get(SECRET_SERVICE, &device.account())
         .ok_or(RememberError::Missing)
 }
 
@@ -222,11 +267,7 @@ mod tests {
     fn temp_dir() -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        std::env::temp_dir().join(format!(
-            "jr-remember-test-{}-{}",
-            std::process::id(),
-            n
-        ))
+        std::env::temp_dir().join(format!("jr-remember-test-{}-{}", std::process::id(), n))
     }
 
     impl SecretStore for FakeSecretStore {
@@ -308,12 +349,12 @@ mod tests {
     }
 
     #[test]
-    fn keychain_account_is_username_at_host() {
+    fn account_is_username_at_host() {
         let d = RememberedDevice {
             host: "jetson.local".into(),
             username: "seeed".into(),
         };
-        assert_eq!(d.keychain_account(), "seeed@jetson.local");
+        assert_eq!(d.account(), "seeed@jetson.local");
     }
 
     #[test]
@@ -321,7 +362,7 @@ mod tests {
         let secrets = FakeSecretStore::default();
         let store = temp_store();
         secrets
-            .set(KEYCHAIN_SERVICE, "seeed@192.168.100.164", "stored")
+            .set(SECRET_SERVICE, "seeed@192.168.100.164", "stored")
             .unwrap();
         let pw = resolve_password(&store, &secrets, DEV, "seeed", Some("typed")).unwrap();
         assert_eq!(pw, "typed");
@@ -332,7 +373,7 @@ mod tests {
         let secrets = FakeSecretStore::default();
         let store = temp_store();
         secrets
-            .set(KEYCHAIN_SERVICE, "seeed@192.168.100.164", "stored")
+            .set(SECRET_SERVICE, "seeed@192.168.100.164", "stored")
             .unwrap();
         let pw = resolve_password(&store, &secrets, DEV, "seeed", None).unwrap();
         assert_eq!(pw, "stored");
@@ -342,13 +383,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_works_over_loopback_in_dev_tunnel_mode() {
-        // KI-004 tunnel: the wire host is 127.0.0.1 but the stored identity
-        // is the LAN host — resolution must still find the Keychain entry.
+    fn resolve_works_over_loopback_in_tunnel_mode() {
+        // KI-021 tunnel: the wire host is 127.0.0.1 but the stored identity
+        // is the LAN host — resolution must still find the stored secret.
         let secrets = FakeSecretStore::default();
         let store = temp_store();
         secrets
-            .set(KEYCHAIN_SERVICE, "seeed@192.168.100.164", "stored")
+            .set(SECRET_SERVICE, "seeed@192.168.100.164", "stored")
             .unwrap();
         let pw = resolve_password(&store, &secrets, "127.0.0.1", "seeed", None).unwrap();
         assert_eq!(pw, "stored");
@@ -359,7 +400,7 @@ mod tests {
         let secrets = FakeSecretStore::default();
         let store = temp_store();
         secrets
-            .set(KEYCHAIN_SERVICE, "seeed@192.168.100.164", "stored")
+            .set(SECRET_SERVICE, "seeed@192.168.100.164", "stored")
             .unwrap();
         // different host (non-loopback) must not consume the stored password
         assert!(matches!(
@@ -371,6 +412,34 @@ mod tests {
             resolve_password(&store, &secrets, DEV, "other", None),
             Err(RememberError::Missing)
         ));
+    }
+
+    #[test]
+    fn file_secret_store_roundtrip_and_permissions() {
+        // Isolated location via the test-only env override.
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("secrets.json");
+        std::env::set_var("JR_SECRETS_FILE", &file);
+        let store = FileSecretStore;
+        assert_eq!(store.get(SECRET_SERVICE, "seeed@h"), None);
+        store.set(SECRET_SERVICE, "seeed@h", "s3cret").unwrap();
+        assert_eq!(
+            store.get(SECRET_SERVICE, "seeed@h").as_deref(),
+            Some("s3cret")
+        );
+        // 0600 on the secrets file
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        store.delete(SECRET_SERVICE, "seeed@h").unwrap();
+        assert_eq!(store.get(SECRET_SERVICE, "seeed@h"), None);
+        // idempotent
+        store.delete(SECRET_SERVICE, "seeed@h").unwrap();
+        std::env::remove_var("JR_SECRETS_FILE");
     }
 
     #[test]

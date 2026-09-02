@@ -74,7 +74,12 @@ extern "C" {
         h: *mut c_int,
         stride: *mut c_int,
     ) -> c_int;
-    pub fn jr_session_send_mouse_move(s: *mut jr_session, x: c_int, y: c_int, buttons: c_int) -> c_int;
+    pub fn jr_session_send_mouse_move(
+        s: *mut jr_session,
+        x: c_int,
+        y: c_int,
+        buttons: c_int,
+    ) -> c_int;
     pub fn jr_session_send_mouse_button(
         s: *mut jr_session,
         button: c_int,

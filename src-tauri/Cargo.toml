@@ -1,6 +1,6 @@
 [package]
 name = "jetson-remote"
-version = "0.2.0"
+version = "0.2.1"
 description = "Zero-configuration remote desktop client for NVIDIA Jetson"
 authors = ["you"]
 edition = "2021"
@@ -33,5 +33,4 @@ thiserror = "2.0.20"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", default-features = false, features = ["apple-native"] }
 

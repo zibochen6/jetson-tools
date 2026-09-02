@@ -40,10 +40,9 @@ cargo install tauri-cli --locked
 # 运行
 cargo tauri dev
 
-# 真机联调（未签名二进制被 macOS 本地网络权限静默阻断，见 docs/KNOWN_ISSUES.md KI-004）
-# 终端 1：系统 ssh 回环隧道
-ssh -L 2222:localhost:22 -L 3389:localhost:3389 <user>@<jetson>
-# 终端 2：dev tunnel 模式启动，SSH/RDP 自动路由到 127.0.0.1
+# 真机联调：app 会自动用系统 ssh 建环回隧道（KI-021），直接启动即可
+cargo tauri dev
+# 可选（仅 dev）：复用手动开的隧道，跳过自建隧道
 VITE_JR_SSH_PORT=2222 cargo tauri dev
 
 # 检查
@@ -74,7 +73,4 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore
 - **自动更新**：稳定版 app 底栏有「检查更新」按钮 → 拉到最新 Release 后「下载并安装」→ 自动替换当前 app 并重启。
   - 开发版（`tauri dev`）只提示新版本并给下载页链接，不做自替换。
   - 更新只支持文本应用替换：仅在本机 `/Applications` 或 `~/Applications` 中**已安装 app 形态**运行时生效。
-- **隧道依赖**：未签名 release 与 dev 一致受 macOS 本地网络限制（KI-004），构建时已内嵌 `VITE_JR_SSH_PORT=2222` 隧道路由。使用前保持隧道：
-  ```bash
-  ssh -L 2222:localhost:22 -L 3389:localhost:3389 seeed@192.168.100.164
-  ```
+- **隧道**：app 用系统 `/usr/bin/ssh` 自动建立环回隧道（SSH/RDP 双平面走 127.0.0.1，规避 macOS 本地网络隐私限制 KI-004，见 KI-021），无需手动配置；密码仅经 0700 目录里的 `SSH_ASKPASS` 脚本传递。

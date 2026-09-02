@@ -3,10 +3,9 @@ name: release
 # Build & publish the macOS app on tag push (v*). The tag commit must have
 # bumped the version in src-tauri/Cargo.toml + tauri.conf.json + package.json.
 #
-# NOTE: builds with VITE_JR_SSH_PORT=2222 so the unsigned release routes the
-# SSH/RDP planes through the loopback tunnel (macOS local-network privacy,
-# KI-004). The user must keep an ssh tunnel running:
-#   ssh -L 2222:localhost:22 -L 3389:localhost:3389 <user>@<jetson>
+# NOTE: unsigned builds are blocked from direct LAN sockets by macOS local-
+# network privacy (KI-004); since 0.2.1 the app creates its own loopback
+# tunnel via the system ssh (KI-021), so no port routing is baked in anymore.
 
 on:
   push:
@@ -36,9 +35,6 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app + dmg
-        env:
-          # Bake dev-tunnel routing into the unsigned release (KI-004)
-          VITE_JR_SSH_PORT: '2222'
         run: pnpm tauri build
 
       - name: Package app as updater asset

@@ -27,8 +27,8 @@
 
 | 环节 | 主要脆弱点 |
 |---|---|
-| 前端路由 | dev tunnel 模式 (TCC)、端口覆盖、TOFU 信任流 |
-| SSH 控制面 | 主机密钥信任库 (hosts.json)、密钥环密码解析 |
+| 前端路由 | in-app 环回隧道（KI-021）、TOFU 信任流 |
+| SSH 控制面 | 主机密钥信任库 (hosts.json)、secrets.json 密码解析 |
 | 设备会话环境 | xfwm4 冻结、屏保挡窗、D-Bus 私总线、合成器 |
 | 嵌入式 FreeRDP | 通道接口时序竞争、PubSub 回调 cast、capabilities 握手 |
 | 输入转发 | **RDP 指针编码语义**（本仓库最大事故源） |
@@ -73,7 +73,7 @@ xrdp 对 `TS_POINTER_EVENT` 的解析（v0.9.17 `xrdp/xrdp_wm.c::xrdp_wm_process
 ### 2.4 其他不变量
 
 - **分辨率 = 会话级**：会话分辨率在 xrdp 登录时确定（`session.rs desktop_size_for`），改窗口大小不会自动调；同用户重连会**复用旧会话**，改几何/`.xsession` 必须杀旧会话重建（`pkill -f '^/usr/lib/xorg/Xorg :10'`，**必须带锚点**，否则自杀——顺手杀掉包含同样字符串的自身 ssh 脚本）。
-- **dev tunnel 模式**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。`VITE_JR_SSH_PORT` 设了就必须 SSH/RDP 双平面走 127.0.0.1；改动 `tauriService.ts` 路由逻辑重看 KI-004 缓解设计。
+- **in-app 环回隧道（KI-021）**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。0.2.1 起后端用系统 `/usr/bin/ssh` 自建隧道，SSH/RDP 双平面一律走 127.0.0.1；本地端口优先 2222/3389（信任库按 wire host:port 计，端口稳定）。dev 仅可用编译期 `VITE_JR_SSH_PORT` 复用外部隧道；改 `tunnel.rs` / `tauriService.ts` 路由逻辑重看 KI-004/KI-021。
 - **RDPGFX 接线**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 是黑屏根因（KI-013）——通道接线逻辑动它前必须理解。
 - **杀会话用锚定模式**：`pkill -f "^/usr/lib/xorg/Xorg :10"`；裸 `pkill -f "Xorg :10"` 会匹配自身 ssh 命令行自杀。
 
@@ -165,7 +165,7 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | 目的 | 路径/命令 |
 |---|---|
 | 粘贴板读 | `pbpaste` / 写 `pbcopy` |
-| app 日志 | `/tmp/tauri-dev.log`（关键字：`jr-flow` 流程、`jr-input` 输入、`jr-clip` 剪贴板、`ERROR`/`WARN`） |
+| app 日志 | dev: `/tmp/tauri-dev.log`；release: `~/Library/Logs/jetson-remote.log`（关键字：`jr-flow` 流程、`jr-input` 输入、`jr-clip` 剪贴板、`ERROR`/`WARN`） |
 | 合成输入注入 | `/tmp/jrdrag`（CGEvent，需要 app 窗口 bounds=`/tmp/jrbounds`） |
 | SSH 免交互 | `SSH_ASKPASS=/tmp/jr-askpass.sh SSH_ASKPASS_REQUIRE=force ssh ...` |
 
@@ -194,6 +194,8 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | KI-017 | WM 活但拖/最大化全失效 | xfwm4 GL 合成器挂死 | 关合成器+replace |
 | KI-018 | 拖不动/黏窗/点击失灵 | **指针 release 编码错误（2.1）** | 已修复 |
 | KI-019 | 剪贴板不通 | **四坑（2.2）** | 已修复 |
+| KI-020 | 每次启动弹 Keychain 授权密码 | ad-hoc 身份不被 Keychain ACL 稳定信任 | 已修复（0600 文件存储） |
+| KI-021 | 未开手动隧道即连不上 | release 内嵌手动隧道路由 | 已修复（app 自建隧道） |
 | 新 | 新症状… | 待分析 | |
 
 ※ KI 详文见 `docs/KNOWN_ISSUES.md`；嵌入式设计见 `docs/EMBEDDED_RDP.md`。
@@ -209,4 +211,4 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 
 ---
 
-*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验。*
+*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）。*

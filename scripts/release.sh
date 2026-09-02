@@ -15,8 +15,8 @@ echo "==> 提示: 请确认已同步 src-tauri/Cargo.toml、tauri.conf.json、pa
 read -r -p "确认继续? [y/N] " ok
 [ "$ok" = "y" ] || [ "$ok" = "Y" ] || exit 1
 
-echo "==> 构建 (tunnel 模式内嵌, KI-004)"
-VITE_JR_SSH_PORT=2222 pnpm tauri build
+echo "==> 构建 (app 自建环回隧道, KI-021)"
+pnpm tauri build
 
 echo "==> 打 updater 资产"
 tar -czf "/tmp/Jetson Remote.app.tar.gz" \

@@ -87,7 +87,11 @@ fn parse_version(s: &str) -> Vec<u64> {
         .trim_start_matches('v')
         .trim_start_matches('V')
         .split('.')
-        .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+        .map(|p| {
+            p.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })
         .map(|p| p.parse::<u64>().unwrap_or(0))
         .collect()
 }
@@ -109,16 +113,16 @@ fn version_is_newer(current: &str, candidate: &str) -> bool {
 }
 
 fn running_bundle() -> Option<PathBuf> {
-	let exe = std::env::current_exe().ok()?;
-	// Walk up from …/Foo.app/Contents/MacOS/<bin> looking for the .app dir.
-	let mut dir = exe.parent()?.to_path_buf();
-	for _ in 0..4 {
-		if dir.extension().map(|e| e == "app").unwrap_or(false) {
-			return Some(dir);
-		}
-		dir = dir.parent()?.to_path_buf();
-	}
-	None
+    let exe = std::env::current_exe().ok()?;
+    // Walk up from …/Foo.app/Contents/MacOS/<bin> looking for the .app dir.
+    let mut dir = exe.parent()?.to_path_buf();
+    for _ in 0..4 {
+        if dir.extension().map(|e| e == "app").unwrap_or(false) {
+            return Some(dir);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
 }
 
 /// Check GitHub Releases for a newer version.
@@ -127,10 +131,11 @@ pub async fn check_for_update() -> Result<UpdateCheckResult, UpdateError> {
     let current = current_version();
     let is_bundled = running_bundle().is_some();
 
-    let (body, code) = tauri::async_runtime::spawn_blocking(move || curl_get(RELEASES_API, None, 30))
-        .await
-        .map_err(|e| UpdateError::new("network", e.to_string()))?
-        .map_err(|e| UpdateError::new("network", e))?;
+    let (body, code) =
+        tauri::async_runtime::spawn_blocking(move || curl_get(RELEASES_API, None, 30))
+            .await
+            .map_err(|e| UpdateError::new("network", e.to_string()))?
+            .map_err(|e| UpdateError::new("network", e))?;
 
     if code == 404 {
         // No releases yet — nothing to update to.
@@ -158,7 +163,11 @@ pub async fn check_for_update() -> Result<UpdateCheckResult, UpdateError> {
 
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| UpdateError::new("parse", e.to_string()))?;
-    let tag = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_owned();
+    let tag = json["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v')
+        .to_owned();
     let html_url = json["html_url"].as_str().map(str::to_owned);
     let body_text = json["body"].as_str().map(str::to_owned);
     let _ = body_text;
@@ -189,7 +198,10 @@ pub async fn check_for_update() -> Result<UpdateCheckResult, UpdateError> {
 /// Download + swap in the new bundle + relaunch. Never returns on success
 /// (the process exits); errors are typed for the frontend.
 #[tauri::command]
-pub async fn download_and_install_update(app: tauri::AppHandle, url: String) -> Result<(), UpdateError> {
+pub async fn download_and_install_update(
+    app: tauri::AppHandle,
+    url: String,
+) -> Result<(), UpdateError> {
     tauri::async_runtime::spawn_blocking(move || do_install(url))
         .await
         .map_err(|e| UpdateError::new("install", e.to_string()))??;
@@ -225,7 +237,10 @@ fn do_install(url: String) -> Result<(), UpdateError> {
     let (_, code) = curl_get(&url, Some(&tar_path), 600)
         .map_err(|e| UpdateError::new("download", format!("下载失败: {e}")))?;
     if code != 200 {
-        return Err(UpdateError::new("download", format!("下载失败 (HTTP {code})")));
+        return Err(UpdateError::new(
+            "download",
+            format!("下载失败 (HTTP {code})"),
+        ));
     }
     let meta = std::fs::metadata(&tar_path)
         .map_err(|e| UpdateError::new("download", format!("下载校验失败: {e}")))?;
@@ -238,7 +253,12 @@ fn do_install(url: String) -> Result<(), UpdateError> {
 
     // 2. Extract
     let tar_status = Command::new("tar")
-        .args(["-xzf", tar_path.to_str().unwrap_or(""), "-C", extract.to_str().unwrap_or("")])
+        .args([
+            "-xzf",
+            tar_path.to_str().unwrap_or(""),
+            "-C",
+            extract.to_str().unwrap_or(""),
+        ])
         .status()
         .map_err(|e| UpdateError::new("install", format!("解压失败: {e}")))?;
     if !tar_status.success() {
@@ -254,7 +274,10 @@ fn do_install(url: String) -> Result<(), UpdateError> {
         .ok_or_else(|| UpdateError::new("install", "更新包中没有找到 .app"))?;
     let binary = new_bundle.join("Contents/MacOS/jetson-remote");
     if !binary.exists() {
-        return Err(UpdateError::new("install", "更新包内容不完整（缺少可执行文件）"));
+        return Err(UpdateError::new(
+            "install",
+            "更新包内容不完整（缺少可执行文件）",
+        ));
     }
 
     // 4. Swap: current → backup, new → current. Roll back on failure.
@@ -264,12 +287,17 @@ fn do_install(url: String) -> Result<(), UpdateError> {
         .map_err(|e| UpdateError::new("permission", format!("无法替换 {bundle_name}（{e}）。\n若安装在 /Applications，请将 app 移到 ~/Applications 或授予写入权限后重试")))?;
     if let Err(e) = std::fs::rename(&new_bundle, &bundle) {
         let _ = std::fs::rename(&backup, &bundle); // rollback
-        return Err(UpdateError::new("install", format!("替换失败（已回滚）: {e}")));
+        return Err(UpdateError::new(
+            "install",
+            format!("替换失败（已回滚）: {e}"),
+        ));
     }
     let _ = std::fs::remove_dir_all(&backup);
 
     // 5. Relaunch and exit.
-    let _ = Command::new("open").args(["-n", bundle.to_str().unwrap_or("")]).spawn();
+    let _ = Command::new("open")
+        .args(["-n", bundle.to_str().unwrap_or("")])
+        .spawn();
     std::process::exit(0);
 }
 

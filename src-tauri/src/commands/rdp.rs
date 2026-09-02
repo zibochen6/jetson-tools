@@ -8,7 +8,8 @@ use crate::rdp::freerdp::FreeRdpSidecarClient;
 use crate::rdp::manager::RdpProcessManager;
 use crate::rdp::session::RdpSessionManager;
 use crate::rdp::types::{RdpConnectionConfig, RdpConnectionRequest, RdpLaunchResult, RdpStatus};
-use crate::remember::{self, KeychainSecretStore, RememberedDeviceStore};
+use crate::remember::{self, FileSecretStore, RememberedDeviceStore};
+use crate::tunnel::{TunnelError, TunnelManager};
 
 /// DEV-only backend selector: `RDP_ENGINE=sidecar` forces the Phase 4A sidecar;
 /// anything else (the default) uses the embedded libfreerdp native surface.
@@ -42,12 +43,14 @@ fn window_ns_window(app: &AppHandle) -> Result<*mut c_void, RdpError> {
 /// Launch the desktop for a prepared Jetson. Returns `AlreadyRunning` rather
 /// than opening a second surface (PRD §16). The frontend sends only the typed
 /// connection request; Rust builds the safe invocation. A missing password is
-/// resolved from the OS keychain (V0.3 auto-reconnect) — it never crosses
-/// back into the frontend.
+/// resolved from the OS secret store (V0.3 auto-reconnect) — it never crosses
+/// back into the frontend. The RDP plane rides the in-app loopback tunnel
+/// (KI-021).
 #[tauri::command]
 pub async fn launch_remote_desktop(
     app: AppHandle,
-    secrets: State<'_, KeychainSecretStore>,
+    secrets: State<'_, FileSecretStore>,
+    tunnels: State<'_, TunnelManager>,
     sidecar: State<'_, RdpProcessManager>,
     embedded: State<'_, RdpSessionManager>,
     mut request: RdpConnectionRequest,
@@ -58,22 +61,45 @@ pub async fn launch_remote_desktop(
 
     // A typed password wins; None (or empty) falls back to the remembered
     // one. Missing → typed error; the frontend asks the user for a password.
-    // The fallback resolves the Keychain account from remembered.json so
-    // dev-tunnel mode (wire host rewritten to loopback, KI-004) works too.
-    let remembered_store = RememberedDeviceStore::for_app(&app)
-        .map_err(|_| map_rdp_error(RdpError::Unknown))?;
-    request.password = Some(
-        remember::resolve_password(
-            &remembered_store,
-            &*secrets,
-            &request.host,
-            &request.username,
-            request.password.as_deref(),
+    // The fallback resolves the secret-store account from remembered.json so
+    // tunnel mode (wire host rewritten to loopback, KI-021) works too.
+    let remembered_store =
+        RememberedDeviceStore::for_app(&app).map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    let password = remember::resolve_password(
+        &remembered_store,
+        &*secrets,
+        &request.host,
+        &request.username,
+        request.password.as_deref(),
+    )
+    .map_err(|_| map_rdp_error(RdpError::PasswordMissing))?;
+    request.password = Some(password.clone());
+
+    // Route the RDP plane through the in-app loopback tunnel (system ssh).
+    let manager = tunnels.inner().clone();
+    let app2 = app.clone();
+    let host = request.host.clone();
+    let username = request.username.clone();
+    let endpoints = tokio::task::spawn_blocking(move || {
+        manager.ensure(
+            &app2,
+            &host,
+            crate::ssh::types::DEFAULT_PORT,
+            &username,
+            &password,
         )
-        .map_err(|_| map_rdp_error(RdpError::PasswordMissing))?,
-    );
+    })
+    .await
+    .map_err(|_| map_rdp_error(RdpError::Unknown))?
+    .map_err(map_tunnel_rdp_error)?;
+    request.host = endpoints.host;
+    request.port = endpoints.rdp_port;
+
     let config = RdpConnectionConfig::from(request);
-    eprintln!("[jr-flow] rdp launch start host={} port={}", config.host, config.port);
+    eprintln!(
+        "[jr-flow] rdp launch start host={} port={}",
+        config.host, config.port
+    );
 
     match engine() {
         Engine::Embedded => {
@@ -114,4 +140,20 @@ pub fn rdp_status(
         Engine::Embedded => embedded.status(),
         Engine::Sidecar => sidecar.status(),
     }
+}
+
+fn map_tunnel_rdp_error(e: TunnelError) -> RdpIpcError {
+    use crate::rdp::error::RdpErrorCode;
+    let (code, message) = match e {
+        TunnelError::AuthFailed => (
+            RdpErrorCode::RdpAuthenticationFailed,
+            "Authentication failed".to_string(),
+        ),
+        TunnelError::Unreachable => (
+            RdpErrorCode::RdpConnectionFailed,
+            "Could not reach the device".to_string(),
+        ),
+        TunnelError::Setup(m) => (RdpErrorCode::RdpUnknown, format!("Secure tunnel: {m}")),
+    };
+    RdpIpcError { code, message }
 }
