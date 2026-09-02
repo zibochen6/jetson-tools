@@ -143,6 +143,12 @@ pub async fn check_for_update() -> Result<UpdateCheckResult, UpdateError> {
             is_bundled_app: is_bundled,
         });
     }
+    if code == 403 || code == 429 {
+        return Err(UpdateError::new(
+            "rateLimited",
+            "GitHub API 访问频率受限，请稍后再试",
+        ));
+    }
     if code != 200 || body.trim().is_empty() {
         return Err(UpdateError::new(
             "network",
