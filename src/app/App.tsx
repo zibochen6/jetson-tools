@@ -9,6 +9,7 @@ import { ErrorScreen } from "../features/connection/components/ErrorScreen";
 import { HostKeyPromptScreen } from "../features/connection/components/HostKeyPromptScreen";
 import { DevScenarioPicker } from "../features/connection/components/DevScenarioPicker";
 import { DevNetworkProbe } from "../features/connection/components/DevNetworkProbe";
+import { UpdateChecker } from "../features/update/UpdateChecker";
 import { devTunnelLabel } from "../features/connection/tauriService";
 
 function App() {
@@ -48,18 +49,16 @@ function App() {
         <div className="flex items-center gap-4">
           {import.meta.env.DEV && <DevScenarioPicker />}
           {import.meta.env.DEV && <DevNetworkProbe />}
-          {import.meta.env.DEV && devTunnelLabel && (
+          {devTunnelLabel && (
             <span
               className="rounded border border-zinc-300 px-1 py-0.5 text-xs text-zinc-500 dark:border-zinc-600 dark:text-zinc-400"
-              title="Dev tunnel mode: SSH + RDP ride the loopback ssh tunnel (KI-004)"
+              title="Tunnel mode: SSH + RDP ride the loopback ssh tunnel (KI-004)"
             >
               TUNNEL {devTunnelLabel}
             </span>
           )}
         </div>
-        <span className="text-xs text-zinc-400 dark:text-zinc-500">
-          {appInfo ? `${appInfo.name} v${appInfo.version}` : "Jetson Remote"}
-        </span>
+        <UpdateChecker currentVersion={appInfo?.version ?? "?"} />
       </footer>
     </div>
   );

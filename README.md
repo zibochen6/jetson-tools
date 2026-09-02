@@ -63,3 +63,18 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore
 ```
 
 详见 `docs/TESTING_JETSON.md`。
+
+### 开发指南（防止改坏连接链路）
+
+- **改任何连接/输入/剪贴板代码前必读**：`docs/CONNECTION_REGRESSION_GUIDE.md`（链路全景、编码硬规则、回归清单、调试速查）
+## 发布与自动更新
+
+- **发布流程**：改完功能 → 同步 bump 三处版本（`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`package.json`）→ 打 tag 推 GitHub（`v0.2.x`）→ Actions 自动构建并发布 Release（dmg + `Jetson Remote.app.tar.gz`）。
+  - 本地手动发布：`scripts/release.sh <version>`（走 gh CLI）。
+- **自动更新**：稳定版 app 底栏有「检查更新」按钮 → 拉到最新 Release 后「下载并安装」→ 自动替换当前 app 并重启。
+  - 开发版（`tauri dev`）只提示新版本并给下载页链接，不做自替换。
+  - 更新只支持文本应用替换：仅在本机 `/Applications` 或 `~/Applications` 中**已安装 app 形态**运行时生效。
+- **隧道依赖**：未签名 release 与 dev 一致受 macOS 本地网络限制（KI-004），构建时已内嵌 `VITE_JR_SSH_PORT=2222` 隧道路由。使用前保持隧道：
+  ```bash
+  ssh -L 2222:localhost:22 -L 3389:localhost:3389 seeed@192.168.100.164
+  ```

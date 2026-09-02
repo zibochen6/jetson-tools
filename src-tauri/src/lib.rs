@@ -6,6 +6,7 @@ pub mod rdp;
 pub mod remember;
 pub mod ssh;
 pub mod trust;
+pub mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +27,8 @@ pub fn run() {
             commands::remember::get_remembered_device,
             commands::remember::remember_device,
             commands::remember::forget_remembered_device,
+            updater::check_for_update,
+            updater::download_and_install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

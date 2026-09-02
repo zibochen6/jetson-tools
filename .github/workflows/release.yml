@@ -1,0 +1,62 @@
+name: release
+
+# Build & publish the macOS app on tag push (v*). The tag commit must have
+# bumped the version in src-tauri/Cargo.toml + tauri.conf.json + package.json.
+#
+# NOTE: builds with VITE_JR_SSH_PORT=2222 so the unsigned release routes the
+# SSH/RDP planes through the loopback tunnel (macOS local-network privacy,
+# KI-004). The user must keep an ssh tunnel running:
+#   ssh -L 2222:localhost:22 -L 3389:localhost:3389 <user>@<jetson>
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install FreeRDP (bridge build dependency)
+        run: brew install freerdp
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app + dmg
+        env:
+          # Bake dev-tunnel routing into the unsigned release (KI-004)
+          VITE_JR_SSH_PORT: '2222'
+        run: pnpm tauri build
+
+      - name: Package app as updater asset
+        run: |
+          tar -czf "Jetson Remote.app.tar.gz" \
+            -C src-tauri/target/release/bundle/macos "Jetson Remote.app"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          DMG=src-tauri/target/release/bundle/dmg/*.dmg
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG exists, uploading assets"
+            gh release upload "$TAG" $DMG "Jetson Remote.app.tar.gz" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" $DMG "Jetson Remote.app.tar.gz" \
+              --repo "$GITHUB_REPOSITORY" --generate-notes --title "$TAG"
+          fi
