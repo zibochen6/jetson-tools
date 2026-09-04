@@ -836,6 +836,7 @@ static void jr_send_unicode_text(jr_session_t* s, const char* utf8)
 	uint32_t len = 0;
 	uint8_t* buf;
 	uint32_t i;
+	uint32_t units = 0;
 
 	if (!s || !s->context || !s->gdi || !utf8)
 		return;
@@ -850,8 +851,10 @@ static void jr_send_unicode_text(jr_session_t* s, const char* utf8)
 			break;
 		(void)freerdp_input_send_unicode_keyboard_event(s->context->input, 0, unit);
 		(void)freerdp_input_send_unicode_keyboard_event(s->context->input, KBD_FLAGS_RELEASE, unit);
+		units++;
 	}
 	free(buf);
+	fprintf(stderr, "[jr-input] unicode sent units=%" PRIu32 "\n", units);
 }
 
 /* Release every modifier key so the remote keyboard state can never stay

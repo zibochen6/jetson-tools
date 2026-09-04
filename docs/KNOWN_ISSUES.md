@@ -257,3 +257,15 @@
 - **修复（0.3.4）**：改用 bootstrap.sh 自己文档化的远程契约——`bash <path>` 以登录用户身份跑脚本，sudo 密码经 stdin 喂给脚本（脚本内部自管升级：有可用票据/免密则 `sudo cmd`，否则读 stdin 一行密码逐次 `sudo -S`）。密码仍只走 SSH channel stdin，绝不进 argv/日志；preflight 预验证密码逻辑保留。
 - **真机验证（2026-09-04，100.105.116.71 / AGX Orin / Ubuntu 24.04）**：用比 App 更严苛的「每步独立 SSH 连接」复现新流程：preflight → mktemp → upload → chmod → `bash + stdin 密码` → **`ready=true` 退出码 0**；随后 RDP 隧道验证真实出帧（on_frame 54→631 持续、nnz>0、中心像素 XFCE 灰）。新设备从裸机到可用桌面一次通过。
 - **状态**：✅ 已修复并真机验证；回归测试覆盖（新 command 契约 + 密码经 stdin 断言）。
+
+## KI-034 — IME 组合期非文本键绕过输入法：组合永久卡死、中英文都无法输入（已修复，0.3.5）
+
+- **症状**：连接后无法打字。中文输入法的浮动组合框出现并卡住；切到英文也无济于事，什么字符都进不了终端。日志里只有 Return/Backspace 等非文本键的 scancode 记录，`IME commit` 从未出现。
+- **根因**：v0.3.3 的 keyDown 路由把 Enter/Esc/Backspace/方向键/Tab 归为「非文本键」直接走远程 scancode。当拼音组合处于活动态（marked text）时，这些键恰恰是用户提交/取消/选词的手段——被绕过后 IME 组合永远无法结束（组合框卡死），后续所有键继续喏进卡住的组合会话（英文也打不进）。另：`selectedRange` 返回 `{NSNotFound,0}` 被多个 CJK 输入法视为「无可用客户端」，加剧卡死。
+- **修复（0.3.5）**：
+  1. **组合期间一切键走 IME**：`jrShouldUseTextInput` 先检查 `hasMarkedText`，为真时（含 Enter/Space/Backspace/方向键/Esc/Cmd 组合）全部 `interpretKeyEvents:`，IME 能正常提交/取消/导航候选。
+  2. **keyDown/keyUp 对称**：按 vk 记录 `_imeKey[]` 标志，press 走了 IME 的键 release 绝不再发孤立 scancode（避免远端 release-无-press 失步）。
+  3. **doCommandBySelector 实装**：组合结束后 IME 转发的命令（insertNewline:/moveLeft:/deleteBackward:/cancelOperation: 等 16 个）映射回对应 scancode（自含 press+release），保证「拼音 Enter 提交后终端命令也被执行」。
+  4. **selectedRange 返回有效空选区** `{0,0}`（对齐 GLFW/SDL/Chromium 实践）；attach 分离时清除组合状态；新增路由/组合/提交/命令诊断日志。
+- **真机验证（2026-09-04，100.72.12.62）**：CGEvent 合成键 + 设备侧 `xinput test` 地面真值：(a) 无组合态单字母直接 `IME commit→unicode sent→设备收到 key event`；(b) 合成组合（字母×2 + setMarkedText 逃代）后 **Enter 触发 `IME commit len=2 → unicode sent units=2`，设备收到两个字符的 press/release**（即原卡死场景）；(c) 无组合态 Enter 走 scancode，设备收到 Return(36)——三条路径全部符合设计。
+- **状态**：✅ 已修复并真机验证。

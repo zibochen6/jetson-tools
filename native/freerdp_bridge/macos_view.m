@@ -72,7 +72,7 @@ static int jr_mod_index(unsigned short vk)
 - (void)setFillRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b;
 - (void)attachInput:(jr_session_t*)session;
 - (BOOL)jrShouldUseTextInput:(NSEvent*)event;
-- (void)jrSendScancode:(NSEvent*)event down:(BOOL)down;
+- (void)jrSendScancode:(unsigned short)vk down:(BOOL)down repeat:(BOOL)repeat;
 @end
 
 @implementation JRView
@@ -89,6 +89,7 @@ static int jr_mod_index(unsigned short vk)
 	int _moveLog;
 	NSMutableAttributedString* _markedText; /* IME composing text (never sent) */
 	NSRange _markedRange;                    /* current marked range             */
+	BOOL _imeKey[128]; /* per-vk: keyDown went to the IME → keyUp must match (KI-034) */
 }
 
 - (instancetype)initWithFrame:(NSRect)frame
@@ -196,8 +197,18 @@ static int jr_mod_index(unsigned short vk)
 		if (self.window)
 			[self.window makeFirstResponder:self];
 	}
-	else if (self.window && self.window.firstResponder == self)
-		[self.window makeFirstResponder:self.nextResponder];
+	else
+	{
+		/* Detach: also drop any live IME composition so a backgrounded session
+		 * can never leave a stuck marked-text state behind (KI-034). */
+		if (_markedText)
+			[_markedText replaceCharactersInRange:NSMakeRange(0, _markedText.length)
+			                     withString:@""];
+		_markedRange = NSMakeRange(NSNotFound, 0);
+		memset(_imeKey, 0, sizeof(_imeKey));
+		if (self.window && self.window.firstResponder == self)
+			[self.window makeFirstResponder:self.nextResponder];
+	}
 }
 
 /* Release every modifier the remote side might believe is held, and drop the
@@ -451,9 +462,16 @@ static int jr_mod_index(unsigned short vk)
 	jr_session_enqueue_mouse_wheel(_inputSession, abs(dyi), ny, abs(dxi), nx, x, y);
 }
 
-/* Text-input routing (macOS IME / §19–§24). */
+/* Text-input routing (macOS IME / §19–§24, KI-034). */
 - (BOOL)jrShouldUseTextInput:(NSEvent*)e
 {
+	/* While the input method is composing (marked text active) EVERY key must
+	 * go through interpretKeyEvents: — Enter/Space/Backspace/arrows/Esc are
+	 * precisely how the user commits, cancels, or picks candidates. Routing
+	 * them straight to the remote scancode path wedges the composition
+	 * forever ("IME box stuck, nothing types — not even English"). */
+	if ([self hasMarkedText])
+		return YES;
 	NSUInteger mods = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
 	/* Command/Control combos (Cmd+key, Ctrl+C/V, …) stay on the physical
 	 * scancode path so remote shortcuts keep their semantics (Cmd = Super;
@@ -464,45 +482,54 @@ static int jr_mod_index(unsigned short vk)
 	return jr_is_text_key(e.keyCode);
 }
 
-- (void)jrSendScancode:(NSEvent*)e down:(BOOL)down
+- (void)jrSendScancode:(unsigned short)vk down:(BOOL)down repeat:(BOOL)repeat
 {
 	unsigned char sc;
 	BOOL ext;
-	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
+	if (!jr_scancode_for_vk(vk, &sc, &ext))
 	{
-		NSLog(@"[jr-input] unmapped vk=0x%02X (dropped)", e.keyCode);
+		NSLog(@"[jr-input] unmapped vk=0x%02X (dropped)", vk);
 		return;
 	}
-	jr_session_enqueue_key_scancode(_inputSession, down ? 1 : 0, down && e.isARepeat ? 1 : 0,
-	                                sc, ext ? 1 : 0);
-	NSLog(@"[jr-input] key%@ vk=0x%02X sc=0x%02X%s repeat=%d", down ? @"Down" : @"Up",
-	      e.keyCode, sc, ext ? " ext" : "", e.isARepeat ? 1 : 0);
+	jr_session_enqueue_key_scancode(_inputSession, down ? 1 : 0, down && repeat ? 1 : 0, sc,
+	                                ext ? 1 : 0);
+	NSLog(@"[jr-input] key%@ vk=0x%02X sc=0x%02X%s repeat=%d", down ? @"Down" : @"Up", vk, sc,
+	      ext ? " ext" : "", repeat ? 1 : 0);
 }
 
 - (void)keyDown:(NSEvent*)e
 {
 	if (!_inputSession)
 		return;
-	if ([self jrShouldUseTextInput:e])
+	BOOL ime = [self jrShouldUseTextInput:e];
+	if (e.keyCode < 128)
+		_imeKey[e.keyCode] = ime;
+	NSLog(@"[jr-input] keyDown vk=0x%02X route=%@ marked=%d", e.keyCode,
+	      ime ? @"ime" : @"scancode", [self hasMarkedText] ? 1 : 0);
+	if (ime)
 	{
 		/* Route through the IME. Committed text arrives in insertText: — the
 		 * composing (pinyin) letters are NEVER forwarded (no "nihao你好"). */
 		[self interpretKeyEvents:@[ e ]];
 		return;
 	}
-	[self jrSendScancode:e down:YES];
+	[self jrSendScancode:e.keyCode down:YES repeat:e.isARepeat];
 }
 
 - (void)keyUp:(NSEvent*)e
 {
 	if (!_inputSession)
 		return;
-	/* Text keys were fully handled by the IME on keyDown (unicode press+release
-	 * is self-contained), so no scancode release is emitted for them — avoids
-	 * double-sending a character. */
-	if ([self jrShouldUseTextInput:e])
+	/* Symmetry with keyDown: a key whose press went to the IME (text key or
+	 * composition handling) must NOT emit a lone scancode release — the IME
+	 * path is self-contained (unicode / command pairs carry their own
+	 * press+release), and a release without a press would desync the remote. */
+	BOOL ime = (e.keyCode < 128) ? _imeKey[e.keyCode] : NO;
+	if (e.keyCode < 128)
+		_imeKey[e.keyCode] = NO;
+	if (ime)
 		return;
-	[self jrSendScancode:e down:NO];
+	[self jrSendScancode:e.keyCode down:NO repeat:NO];
 }
 
 #pragma mark - NSTextInputClient
@@ -519,7 +546,11 @@ static int jr_mod_index(unsigned short vk)
 
 - (NSRange)selectedRange
 {
-	return NSMakeRange(NSNotFound, 0);
+	/* KI-034: a VALID empty selection at position 0. Several CJK input methods
+	 * treat {NSNotFound, 0} as "no usable client" and stall their composition
+	 * session; every mainstream custom NSTextInputClient (GLFW/SDL/Chromium)
+	 * returns a real range. */
+	return NSMakeRange(0, 0);
 }
 
 - (void)setMarkedText:(id)string
@@ -535,6 +566,7 @@ static int jr_mod_index(unsigned short vk)
 		_markedText = [[NSMutableAttributedString alloc] init];
 	[_markedText replaceCharactersInRange:NSMakeRange(0, _markedText.length) withString:s];
 	_markedRange = NSMakeRange(0, s.length);
+	NSLog(@"[jr-input] setMarkedText len=%lu", (unsigned long)s.length);
 	/* Deliberately DO NOT forward the marked text — only insertText (commit)
 	 * is sent to the remote (no raw pinyin leak). */
 }
@@ -544,6 +576,7 @@ static int jr_mod_index(unsigned short vk)
 	if (_markedText)
 		[_markedText replaceCharactersInRange:NSMakeRange(0, _markedText.length) withString:@""];
 	_markedRange = NSMakeRange(NSNotFound, 0);
+	NSLog(@"[jr-input] unmarkText");
 }
 
 - (NSArray*)validAttributesForMarkedText
@@ -594,10 +627,55 @@ static int jr_mod_index(unsigned short vk)
 
 - (void)doCommandBySelector:(SEL)selector
 {
-	/* Movement/command selectors emitted while composing are not forwarded to
-	 * the remote (the remote has no composing buffer); candidate-window
-	 * navigation is handled by the macOS input method itself. */
-	(void)selector;
+	/* Commands (insertNewline:, moveLeft:, …) arrive from interpretKeyEvents.
+	 * While composing they belong to the IME's own handling (candidate
+	 * navigation / commit) and must NOT reach the remote. Once no marked text
+	 * remains, translate the common ones to their scancode equivalents so keys
+	 * the IME consumed-and-forwarded still reach the remote — e.g. an Enter
+	 * that committed a pinyin composition also runs the terminal command. */
+	typedef struct
+	{
+		SEL sel;
+		unsigned short vk;
+	} jr_cmd_map;
+	const jr_cmd_map kMap[] = {
+		{ @selector(insertNewline:), 0x24 },                   /* Enter          */
+		{ @selector(insertNewlineIgnoringFieldEditor:), 0x24 }, /* Enter          */
+		{ @selector(insertTab:), 0x30 },                      /* Tab            */
+		{ @selector(insertTabIgnoringFieldEditor:), 0x30 },    /* Tab            */
+		{ @selector(deleteBackward:), 0x33 },                 /* Backspace      */
+		{ @selector(deleteForward:), 0x75 },                  /* ForwardDelete  */
+		{ @selector(cancelOperation:), 0x35 },                /* Escape         */
+		{ @selector(moveUp:), 0x7E },                          /* Up             */
+		{ @selector(moveDown:), 0x7D },                        /* Down           */
+		{ @selector(moveLeft:), 0x7B },                        /* Left           */
+		{ @selector(moveRight:), 0x7C },                       /* Right          */
+		{ @selector(moveToBeginningOfLine:), 0x73 },           /* Home           */
+		{ @selector(moveToEndOfLine:), 0x77 },                 /* End            */
+		{ @selector(scrollPageUp:), 0x74 },                    /* PageUp         */
+		{ @selector(scrollPageDown:), 0x79 },                  /* PageDown       */
+		{ @selector(moveToBeginningOfDocument:), 0x73 },       /* Home           */
+		{ @selector(moveToEndOfDocument:), 0x77 },             /* End            */
+	};
+	NSLog(@"[jr-input] doCommandBySelector=%@ marked=%d", NSStringFromSelector(selector),
+	      [self hasMarkedText] ? 1 : 0);
+	if ([self hasMarkedText])
+		return; /* composition-owned: never forwarded */
+	if (!_inputSession)
+		return;
+	for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); i++)
+	{
+		if (selector == kMap[i].sel)
+		{
+			/* Self-contained press+release pair (the natural keyUp for this key
+			 * was routed to the IME path; a later stray extra release is a
+			 * remote no-op). */
+			[self jrSendScancode:kMap[i].vk down:YES repeat:NO];
+			[self jrSendScancode:kMap[i].vk down:NO repeat:NO];
+			return;
+		}
+	}
+	/* Unmapped selectors (noop:, …) are intentionally dropped. */
 }
 
 - (void)flagsChanged:(NSEvent*)e
