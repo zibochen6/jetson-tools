@@ -90,3 +90,21 @@ printf '/v:192.168.100.164:3389\n/u:seeed\n/p:PASSWORD\n/cert:tofu\n+clipboard\n
 - `cargo tauri dev` → 输入 `192.168.100.164 / seeed / seeed` → Connect → Trust → 自动弹出 XFCE 桌面窗口。
 - 键盘 / 鼠标 / 文字剪贴板双向 / resize 动态分辨率 / Retina 缩放对齐。
 - macOS 本地网络权限是否拦截未签名 Homebrew FreeRDP（KI-004）。
+## identity-v3 真机测试清单（按设备名双开 · 自动选 LAN/Tailscale）
+
+> 设备 A = robotics（`seeed@192.168.2.18` LAN / `seeed@100.114.170.49` Tailscale）
+> 设备 B = mini（`seeed@192.168.100.164` LAN / `seeed@100.94.85.115` Tailscale，密码已确认仍为 `seeed`）
+> 已完成（2026-09-03，SSH 只读验证）：
+> - [x] detect.sh 真机输出：mini `serial_number=1421123007848`、`machine_id=5dbfb124…`、paths=[LAN 192.168.100.164, Tailscale 100.94.85.115]，`l4tbr0`/`docker0`/`br-*` 已过滤
+> - [x] robotics 经 LAN 与 Tailscale 两个入口上报同一 machine-id（同一设备识别 ✓）
+> - [x] LAN 断开时 Tailscale 入口仍可达（选路回退场景实物复现 ✓）
+> - [x] **发现并规避 KI-026**：两板 machine-id 相同（克隆镜像）→ deviceId 改为序列号优先
+
+> 待 robotics 网络稳定后跑 App 层验证（`pnpm tauri dev`）：
+> - [ ] 两台同时 running：日志出现两条不同本地端口的 `[jr-flow] tunnel up`
+> - [ ] 切 Tab 10 次不重连（无新的 tunnel spawn / rdp relaunch 日志）
+> - [ ] 关一台（Tab ×）不影响另一台
+> - [ ] A 分别用 LAN 和 Tailscale 入口 → 同一显名、同一 Tab，不出现两台设备
+> - [ ] robotics 序列号 ≠ mini 序列号（`tr -d '\0' < /proc/device-tree/serial-number`）
+> - [ ] 拔掉更快那条网后，下次连接自动走另一条（`probe_device_paths` RTT 排序日志）
+> - [ ] 新 machine 首次连接必须起名才能进桌面；旧 v2 记忆启动可列出、连上后合并

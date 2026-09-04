@@ -11,10 +11,7 @@ use jetson_remote_lib::net::probe::{classify, tcp_probe};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let host = args
-        .get(1)
-        .map(String::as_str)
-        .unwrap_or("192.168.100.164");
+    let host = args.get(1).map(String::as_str).unwrap_or("192.168.100.164");
     let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(22);
     let timeout_ms: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(5000);
 

@@ -26,6 +26,12 @@ const DEFAULT_HEIGHT: c_int_raw = 720;
 /// et al.), which predate the keyed multi-device API (V0.4).
 pub const LEGACY_SESSION_KEY: &str = "__legacy__";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLaunchMode {
+    Focused,
+    Background,
+}
+
 /// Match the RDP desktop to the window's content aspect so the native view
 /// blits without letterboxing and pointer mapping stays exact (scale ~1:1 for
 /// a landscape window). Session size is fixed at login; a reconnect picks up
@@ -34,7 +40,8 @@ pub const LEGACY_SESSION_KEY: &str = "__legacy__";
 fn desktop_size_for(ns_window: *mut c_void, top_inset: f64) -> (c_int_raw, c_int_raw) {
     let (mut w, mut h) = (0.0f64, 0.0f64);
     unsafe { ffi::jr_window_content_size(ns_window, &mut w, &mut h) };
-    h = (h - top_inset).max(100.0);
+    let safe_top = unsafe { ffi::jr_window_safe_area_top(ns_window) };
+    h = (h - safe_top - top_inset).max(100.0);
     if w < 100.0 || h < 100.0 {
         return (DEFAULT_WIDTH, DEFAULT_HEIGHT);
     }
@@ -47,6 +54,42 @@ fn desktop_size_for(ns_window: *mut c_void, top_inset: f64) -> (c_int_raw, c_int
 struct SessionContext {
     session: *mut ffi::jr_session,
     view: *mut c_void,
+    usable_frame: Arc<AtomicBool>,
+}
+
+/// XRDP can complete the TLS/RDP handshake even when `xrdp-sesman` is stuck.
+/// In that failure mode FreeRDP receives a uniform white framebuffer forever.
+/// Require a small amount of RGB variation before treating the desktop as
+/// usable; XFCE's panel/window chrome easily clears this while the transient
+/// black/white login buffers do not.
+fn frame_is_usable(buffer: &[u8], width: usize, height: usize, stride: usize) -> bool {
+    if width == 0 || height == 0 || stride < width.saturating_mul(4) {
+        return false;
+    }
+    if buffer.len() < stride.saturating_mul(height) {
+        return false;
+    }
+
+    let mut first: Option<[u8; 3]> = None;
+    for gy in 0..18 {
+        let y = gy * (height - 1) / 17;
+        for gx in 0..32 {
+            let x = gx * (width - 1) / 31;
+            let offset = y * stride + x * 4;
+            let rgb = [buffer[offset], buffer[offset + 1], buffer[offset + 2]];
+            if let Some(reference) = first {
+                let delta = rgb[0].abs_diff(reference[0]) as u16
+                    + rgb[1].abs_diff(reference[1]) as u16
+                    + rgb[2].abs_diff(reference[2]) as u16;
+                if delta >= 18 {
+                    return true;
+                }
+            } else {
+                first = Some(rgb);
+            }
+        }
+    }
+    false
 }
 
 unsafe extern "C" fn on_frame(
@@ -67,6 +110,13 @@ unsafe extern "C" fn on_frame(
         ffi::jr_session_get_framebuffer(ctx.session, &mut buf, &mut w, &mut h, &mut stride)
     };
     if rc == 0 && !buf.is_null() {
+        if w > 0 && h > 0 && stride > 0 {
+            let len = (stride as usize).saturating_mul(h as usize);
+            let pixels = unsafe { std::slice::from_raw_parts(buf, len) };
+            if frame_is_usable(pixels, w as usize, h as usize, stride as usize) {
+                ctx.usable_frame.store(true, Ordering::SeqCst);
+            }
+        }
         // Copies the buffer before returning (macos_view.m does the copy).
         unsafe { ffi::jr_view_present_buffer(ctx.view, buf, w, h, stride, 0, 0, w, h) };
     }
@@ -94,6 +144,9 @@ pub struct RdpSession {
     finished: Arc<AtomicBool>,
     /// Last C-bridge error string (empty on clean close), surfaced via status.
     exit_error: Arc<Mutex<Option<String>>>,
+    /// True only after the framebuffer contains a real desktop rather than
+    /// XRDP's uniform pre-session buffer.
+    usable_frame: Arc<AtomicBool>,
     /// This session currently owns the global clipboard sync (only one can).
     clipboard_active: bool,
     /// This session's view currently forwards input (only the mounted one does).
@@ -111,7 +164,7 @@ impl RdpSession {
     /// thread, so no caller `unsafe` is required.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn launch(config: &RdpConnectionConfig, ns_window: *mut c_void) -> Result<Self, RdpError> {
-        Self::launch_inner(config, ns_window, None)
+        Self::launch_inner(config, ns_window, None, SessionLaunchMode::Focused)
     }
 
     /// Multi-device entry point (V0.4): mount below a `top_inset`-point strip
@@ -121,37 +174,46 @@ impl RdpSession {
         config: &RdpConnectionConfig,
         ns_window: *mut c_void,
         top_inset: f64,
+        mode: SessionLaunchMode,
     ) -> Result<Self, RdpError> {
-        Self::launch_inner(config, ns_window, Some(top_inset))
+        Self::launch_inner(config, ns_window, Some(top_inset), mode)
     }
 
     fn launch_inner(
         config: &RdpConnectionConfig,
         ns_window: *mut c_void,
         top_inset: Option<f64>,
+        mode: SessionLaunchMode,
     ) -> Result<Self, RdpError> {
         let view = NativeView::create();
         view.set_fill(0x1e, 0x20, 0x26); // subtle dark placeholder until first frame
-        match top_inset {
-            // SAFETY: `ns_window` is the live Tauri main window handle.
-            Some(inset) => unsafe { view.add_to_window_inset(ns_window, inset) },
-            None => unsafe { view.add_to_window(ns_window) },
+        if mode == SessionLaunchMode::Focused {
+            match top_inset {
+                // SAFETY: `ns_window` is the live Tauri main window handle.
+                Some(inset) => unsafe { view.add_to_window_inset(ns_window, inset) },
+                None => unsafe { view.add_to_window(ns_window) },
+            }
         }
 
         let finished = Arc::new(AtomicBool::new(false));
+        let usable_frame = Arc::new(AtomicBool::new(false));
         let ctx = Box::new(SessionContext {
             session: std::ptr::null_mut(),
             view: view.raw(),
+            usable_frame: usable_frame.clone(),
         });
         // SAFETY: the box is reclaimed in `shutdown` after the worker is joined.
         let ctx_ptr: *mut SessionContext = Box::into_raw(ctx);
 
+        let certificate_name =
+            CString::new(config.certificate_name.clone()).map_err(|_| RdpError::Unknown)?;
         let host = CString::new(config.host.clone()).map_err(|_| RdpError::Unknown)?;
         let username = CString::new(config.username.clone()).map_err(|_| RdpError::Unknown)?;
         let password = CString::new(config.password.clone()).map_err(|_| RdpError::Unknown)?;
 
         let (dw, dh) = desktop_size_for(ns_window, top_inset.unwrap_or(0.0));
         let params = ffi::jr_connect_params {
+            certificate_name: certificate_name.as_ptr(),
             host: host.as_ptr(),
             port: config.port,
             username: username.as_ptr(),
@@ -184,9 +246,11 @@ impl RdpSession {
         unsafe { (*ctx_ptr).session = session };
         // Forward AppKit input events from the view into this session. Must be
         // detached (synchronously) before `jr_session_destroy` in `shutdown`.
-        view.attach_input(Some(session));
-        // Mac pasteboard <-> remote clipboard (CLIPRDR) text sync.
-        unsafe { ffi::jr_clipboard_sync_start(session as *mut c_void) };
+        if mode == SessionLaunchMode::Focused {
+            view.attach_input(Some(session));
+            // Mac pasteboard <-> remote clipboard (CLIPRDR) text sync.
+            unsafe { ffi::jr_clipboard_sync_start(session as *mut c_void) };
+        }
 
         let saddr = session as usize;
         let finished2 = finished.clone();
@@ -213,13 +277,18 @@ impl RdpSession {
             worker: Some(worker),
             finished,
             exit_error,
-            clipboard_active: true,
-            input_attached: true,
+            usable_frame,
+            clipboard_active: mode == SessionLaunchMode::Focused,
+            input_attached: mode == SessionLaunchMode::Focused,
         })
     }
 
     pub fn is_running(&self) -> bool {
         !self.finished.load(Ordering::SeqCst)
+    }
+
+    pub fn has_usable_frame(&self) -> bool {
+        self.usable_frame.load(Ordering::SeqCst)
     }
 
     /// Yield the screen: detach input + clipboard, remove the view from the
@@ -243,11 +312,18 @@ impl RdpSession {
     /// re-attach input + clipboard.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn refocus(&mut self, ns_window: *mut c_void, top_inset: f64) {
+        self.refocus_with_layout(ns_window, Some(top_inset));
+    }
+
+    fn refocus_with_layout(&mut self, ns_window: *mut c_void, top_inset: Option<f64>) {
         if self.session.is_null() {
             return;
         }
         // SAFETY: `ns_window` is the live Tauri main window handle.
-        unsafe { self._view.add_to_window_inset(ns_window, top_inset) };
+        match top_inset {
+            Some(inset) => unsafe { self._view.add_to_window_inset(ns_window, inset) },
+            None => unsafe { self._view.add_to_window(ns_window) },
+        }
         self._view.attach_input(Some(self.session));
         self.input_attached = true;
         if !self.clipboard_active {
@@ -322,7 +398,13 @@ impl RdpSessionManager {
         config: &RdpConnectionConfig,
         ns_window: *mut c_void,
     ) -> Result<(), RdpError> {
-        self.launch_entry(LEGACY_SESSION_KEY, config, ns_window, None)
+        self.launch_entry(
+            LEGACY_SESSION_KEY,
+            config,
+            ns_window,
+            None,
+            SessionLaunchMode::Focused,
+        )
     }
 
     pub fn status(&self) -> RdpStatus {
@@ -362,8 +444,9 @@ impl RdpSessionManager {
         config: &RdpConnectionConfig,
         ns_window: *mut c_void,
         top_inset: f64,
+        mode: SessionLaunchMode,
     ) -> Result<(), RdpError> {
-        self.launch_entry(id, config, ns_window, Some(top_inset))
+        self.launch_entry(id, config, ns_window, Some(top_inset), mode)
     }
 
     fn launch_entry(
@@ -372,6 +455,7 @@ impl RdpSessionManager {
         config: &RdpConnectionConfig,
         ns_window: *mut c_void,
         top_inset: Option<f64>,
+        mode: SessionLaunchMode,
     ) -> Result<(), RdpError> {
         // BEFORE creating the new session, make every prior session yield the
         // global resources (clipboard sync, input, screen). Ordering matters:
@@ -380,29 +464,60 @@ impl RdpSessionManager {
         let prior_under_key = {
             let mut sessions = self.sessions.lock().unwrap();
             let mut focused = self.focused.lock().unwrap();
-            if let Some(fid) = focused.as_deref() {
-                if fid != id {
-                    if let Some(prev) = sessions.get_mut(fid) {
-                        prev.unfocus(); // keeps running headless
+            match mode {
+                SessionLaunchMode::Focused => {
+                    if let Some(fid) = focused.as_deref() {
+                        if fid != id {
+                            if let Some(prev) = sessions.get_mut(fid) {
+                                prev.unfocus(); // keeps running headless
+                            }
+                        }
                     }
+                    *focused = None;
                 }
+                SessionLaunchMode::Background if focused.as_deref() == Some(id) => {
+                    // The old session under this key has exited. Remove its
+                    // stale focus marker, but never disturb another device.
+                    *focused = None;
+                }
+                SessionLaunchMode::Background => {}
             }
-            *focused = None;
             sessions.remove(id) // re-launch (retry) path: same-key predecessor
         };
         if let Some(mut old) = prior_under_key {
             old.shutdown(); // blocking join — outside the lock on purpose
         }
 
-        // On launch failure the screen stays empty (focused = None); the
-        // frontend surfaces the error and can retry.
-        let session = match top_inset {
-            Some(inset) => RdpSession::launch_inset(config, ns_window, inset)?,
-            None => RdpSession::launch(config, ns_window)?,
+        // Construct detached, then claim the global view/input/clipboard
+        // resources under the manager lock below. This preserves the required
+        // stop-before-start ordering even if another focus request races the
+        // connection setup.
+        let mut session = match top_inset {
+            Some(inset) => {
+                RdpSession::launch_inset(config, ns_window, inset, SessionLaunchMode::Background)?
+            }
+            None => {
+                RdpSession::launch_inner(config, ns_window, None, SessionLaunchMode::Background)?
+            }
         };
         let mut sessions = self.sessions.lock().unwrap();
+        let mut focused = self.focused.lock().unwrap();
+        if mode == SessionLaunchMode::Focused {
+            // Another focus request may have completed while this session was
+            // connecting. Yield it before taking the native surface.
+            if let Some(fid) = focused.as_deref() {
+                if fid != id {
+                    if let Some(prev) = sessions.get_mut(fid) {
+                        prev.unfocus();
+                    }
+                }
+            }
+            session.refocus_with_layout(ns_window, top_inset);
+        }
         sessions.insert(id.to_string(), session);
-        *self.focused.lock().unwrap() = Some(id.to_string());
+        if mode == SessionLaunchMode::Focused {
+            *focused = Some(id.to_string());
+        }
         Ok(())
     }
 
@@ -499,6 +614,17 @@ impl RdpSessionManager {
             .is_some_and(|s| s.is_running())
     }
 
+    /// A live transport is not enough: XRDP may stay connected while sesman
+    /// never supplies a desktop. This becomes true only after a non-uniform
+    /// framebuffer has arrived.
+    pub fn has_usable_frame_keyed(&self, id: &str) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(RdpSession::has_usable_frame)
+    }
+
     pub fn any_running(&self) -> bool {
         self.sessions
             .lock()
@@ -565,5 +691,21 @@ mod tests {
         let mgr = RdpSessionManager::new();
         mgr.clear_exited();
         assert!(mgr.all_statuses().is_empty());
+    }
+
+    #[test]
+    fn uniform_login_buffers_are_not_usable_frames() {
+        let black = vec![0_u8; 8 * 4];
+        let white = vec![255_u8; 8 * 4];
+        assert!(!frame_is_usable(&black, 2, 4, 8));
+        assert!(!frame_is_usable(&white, 2, 4, 8));
+    }
+
+    #[test]
+    fn desktop_pixel_variation_marks_frame_usable() {
+        let mut pixels = vec![255_u8; 8 * 4];
+        let last_pixel = 3 * 8 + 4;
+        pixels[last_pixel..last_pixel + 3].copy_from_slice(&[30, 80, 120]);
+        assert!(frame_is_usable(&pixels, 2, 4, 8));
     }
 }

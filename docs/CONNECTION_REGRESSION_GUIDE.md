@@ -128,6 +128,15 @@ ssh seeed@127.0.0.1 -p 2222 'DISPLAY=:10.0 timeout 6 xclip -selection clipboard 
 grep -E "jr-flow" /tmp/tauri-dev.log    # probe start→authenticated→detected ok→prepare start→rdp launch start
 ```
 
+同时确认远端 XRDP 的 TLS 私钥可用（KI-014）：
+
+```bash
+id -nG xrdp | tr ' ' '\n' | grep -qx ssl-cert
+journalctl -u xrdp --no-pager -n 50 | grep -F "Cannot read private key file" && exit 1 || true
+```
+
+**判定**：`ssl-cert` 组存在且无新的私钥权限错误；否则环境检查必须进入 repair，而不是把“服务 active + 3389 listening”误判为 ready。
+
 ### 3.4 桌面可用性（视觉/操作抽查）
 
 - [ ] 画面非黑屏且持续刷新（无 KI-013 回归）
@@ -144,6 +153,16 @@ pnpm typecheck && pnpm lint && pnpm test
 # 确认 native 改动真的进了二进制（strings 只找字符串字面量，用 nm）：
 nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 ```
+
+### 3.6 多设备并发（发布多设备改动时必须全绿）
+
+- [ ] macOS 标题栏下方的 Tab 行完整露出，设备总览、每台设备和关闭按钮均可点击；原生桌面从 Tab 行下沿开始。
+- [ ] 两台 Jetson 同时显示为 running，日志中有两个不同的 RDP 本地端口。
+- [ ] 每个新会话仅在收到非纯色桌面首帧后变为 running；模拟/复现 sesman 卡死时会自动重启两个 XRDP 服务并重试，不会停在“running + 白屏”。
+- [ ] 前后台 Tab 连续切换 10 次不出现新的 tunnel spawn / rdp session launch，后台连接保持存活。
+- [ ] 当前 Tab 独占鼠标、键盘和剪贴板；后台设备自动重连不得切走前台 Tab。
+- [ ] 关闭或重连其中一台后，另一台的画面、输入、剪贴板和 tunnel health 均不受影响。
+- [ ] app 退出后所有匹配 `tunnel/known_hosts` 的 SSH 进程组均被回收，`tunnel/session-*` 凭据目录无遗留。
 
 ---
 
@@ -198,6 +217,7 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | KI-020 | 每次启动弹 Keychain 授权密码 | ad-hoc 身份不被 Keychain ACL 稳定信任 | 已修复（0600 文件存储） |
 | KI-021 | 未开手动隧道即连不上 | release 内嵌手动隧道路由 | 已修复（app 自建隧道） |
 | KI-023 | 按 e 打开文件管理器、空格失灵（其他键正常） | 远端 Super 卡键：Cmd 松开事件被 macOS 系统快捷键路径吞掉 + xrdp 常驻会话保留卡键态 | 已修复（连接/焦点/attach 自动 reset 修饰键） |
+| KI-025 | Tab 被遮挡；显示 running 但纯白 | 原生视图漏算 macOS safe area；sesman 假健康且启动未等真实首帧 | 已修复（safe area + 首帧门槛 + 服务自愈） |
 | 新 | 新症状… | 待分析 | |
 
 ※ KI 详文见 `docs/KNOWN_ISSUES.md`；嵌入式设计见 `docs/EMBEDDED_RDP.md`。

@@ -33,6 +33,25 @@ if dpkg-query -W -f='${Version}' nvidia-jetpack >/dev/null 2>&1; then
   JETPACK_DPKG_VER="$(dpkg-query -W -f='${Version}' nvidia-jetpack 2>/dev/null)"
 fi
 
+MACHINE_ID=""
+[ -f /etc/machine-id ] && MACHINE_ID="$(tr -d ' \t\r\n' < /etc/machine-id 2>/dev/null)"
+
+# 设备树出厂序列号：Jetson 模组唯一。真机发现克隆镜像的 /etc/machine-id
+# 会重复（两台板同值），serial-number 才是每板唯一的稳定 ID 首选。
+SERIAL_NUMBER=""
+[ -f /proc/device-tree/serial-number ] && SERIAL_NUMBER="$(tr -d '\0 \t\r\n' < /proc/device-tree/serial-number 2>/dev/null)"
+
+# 所有全局 IPv4（候选路径）；格式 "iface=addr"，过滤/分类在 python 侧完成
+# （只读，不装任何东西）。
+IPV4_ALL=""
+if command -v ip >/dev/null 2>&1; then
+  IPV4_ALL="$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print $2"="a[1]}' | tr '\n' ' ')"
+fi
+if [ -z "$IPV4_ALL" ] && command -v hostname >/dev/null 2>&1; then
+  # 兜底：无接口名，按 "=addr" 处理（python 侧跳过接口名过滤）
+  IPV4_ALL="$(hostname -I 2>/dev/null | tr ' ' '\n' | sed 's/^/=//' | tr '\n' ' ')"
+fi
+
 MODEL=""
 [ -f /proc/device-tree/model ] && MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)"
 
@@ -95,7 +114,7 @@ fi
 # ---------- 输出 JSON（python3 保证转义，值经 env 传入避免 arg 换行/长度问题） ----------
 export ARCH HOSTNAME UBUNTU_ID UBUNTU_VERSION_ID PRETTY_NAME \
        NV_TEGRA L4T_CORE_VER JETPACK_DPKG_VER MODEL COMPATIBLE \
-       IS_JETSON L4T_VERSION JETPACK_VERSION \
+       IS_JETSON L4T_VERSION JETPACK_VERSION MACHINE_ID SERIAL_NUMBER IPV4_ALL \
        XRDP_INSTALLED XORGXRDP_INSTALLED XFCE_INSTALLED \
        XRDP_ACTIVE PORT_3389
 
@@ -103,6 +122,36 @@ python3 - <<'PY'
 import json, os
 def g(k):
     return os.environ.get(k, "")
+def classify_ips(raw):
+    import ipaddress, re
+    # 虚拟/桥接接口一律不作为可达路径：docker、L4T USB 桥（Seeed 用
+    # 192.168.56 网段）、libvirt、VM 主机网络等。
+    skip_iface = re.compile(
+        r"^(lo|docker|br-|l4tbr|virbr|veth|usb|lxcbr|vmnet|vboxnet)"
+    )
+    out = []
+    for tok in raw.split():
+        iface, _, addr = tok.partition("=")
+        if not addr:
+            addr, iface = tok, ""
+        if iface and skip_iface.match(iface):
+            continue
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if ip.version != 4 or ip.is_loopback or ip.is_link_local:
+            continue
+        if ip in ipaddress.ip_network("172.17.0.0/16"):
+            continue
+        if ip in ipaddress.ip_network("192.168.55.0/24"):
+            continue
+        if ip in ipaddress.ip_network("100.64.0.0/10"):
+            out.append({"address": str(ip), "kind": "tailscale"})
+            continue
+        if ip.is_private:
+            out.append({"address": str(ip), "kind": "lan"})
+    return out
 d = {
     "is_jetson": g("IS_JETSON") == "true",
     "architecture": g("ARCH"),
@@ -113,6 +162,9 @@ d = {
     "l4t_version": g("L4T_VERSION"),
     "jetpack_version": g("JETPACK_VERSION"),
     "device_model": (g("MODEL") or "").strip(),
+    "machine_id": g("MACHINE_ID"),
+    "serial_number": g("SERIAL_NUMBER"),
+    "ipv4_addresses": classify_ips(g("IPV4_ALL")),
     "nvidia_l4t_core_default_version": g("L4T_CORE_VER"),
     "nv_tegra_release": g("NV_TEGRA").strip(),
     "remote_desktop": {

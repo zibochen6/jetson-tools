@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createSessionsStore,
+  sessionPathLabel,
   SessionDesktopGateway,
 } from "./sessionsStore";
 import { RdpLaunchResult, RdpStatus } from "../features/connection/types";
@@ -17,8 +18,8 @@ function fakeGateway(): FakeGateway {
     calls: [],
     statuses: new Map(),
     launchShouldFail: false,
-    async launch(sessionId): Promise<RdpLaunchResult> {
-      gw.calls.push(`launch:${sessionId}`);
+    async launch(sessionId, _input, options): Promise<RdpLaunchResult> {
+      gw.calls.push(`launch:${sessionId}:${options.focusOnLaunch}`);
       if (gw.launchShouldFail) throw new Error("nope");
       gw.statuses.set(sessionId, { kind: "running" });
       return { kind: "opened" };
@@ -96,7 +97,7 @@ describe("sessionsStore (multi-device, V0.4)", () => {
     await flush();
     expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe("running");
     expect(store.getState().activeId).toBe("seeed@192.168.1.31");
-    expect(gw.calls).toContain("launch:seeed@192.168.1.31");
+    expect(gw.calls).toContain("launch:seeed@192.168.1.31:true");
   });
 
   it("showOverview hides every native view but keeps sessions alive", () => {
@@ -159,8 +160,37 @@ describe("sessionsStore (multi-device, V0.4)", () => {
       await vi.advanceTimersByTimeAsync(2100);
       await flush();
       // one auto-relaunch happened
-      expect(gw.calls).toContain("launch:seeed@192.168.1.31");
+      expect(gw.calls).toContain("launch:seeed@192.168.1.31:false");
       // gateway "relaunch" succeeded → running again
+      expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe(
+        "running",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("background recovery never steals focus from another device", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      const store = createSessionsStore(gw);
+      store.getState().register(B, null);
+      store.getState().register(A, null); // A is the foreground device.
+      gw.statuses.set("seeed@192.168.1.31", { kind: "running" });
+      gw.statuses.set("seeed@192.168.1.42", {
+        kind: "exited",
+        exitCode: 1,
+        error: "connect failed",
+      });
+
+      await store.getState().pollStatuses();
+      await vi.advanceTimersByTimeAsync(2100);
+      await flush();
+
+      expect(gw.calls).toContain("launch:seeed@192.168.1.42:false");
+      expect(store.getState().activeId).toBe("seeed@192.168.1.31");
+      expect(gw.calls).not.toContain("focus:seeed@192.168.1.42");
       expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe(
         "running",
       );
@@ -194,6 +224,104 @@ describe("sessionsStore (multi-device, V0.4)", () => {
     await store.getState().pollStatuses(); // gateway throws → state kept
     expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe(
       "running",
+    );
+  });
+});
+
+describe("sessionsStore (identity-v3: deviceId keys)", () => {
+  it("register keys the session by username@deviceId", () => {
+    const gw = fakeGateway();
+    const store = createSessionsStore(gw);
+    store.getState().register(
+      {
+        host: "192.168.2.18",
+        username: "seeed",
+        password: "pw",
+        deviceId: "5dbfb124",
+        displayName: "robotics",
+      },
+      { host: "192.168.2.18", deviceId: "5dbfb124" },
+    );
+
+    const s = store.getState();
+    expect(s.order).toEqual(["seeed@5dbfb124"]);
+    expect(s.sessions["seeed@5dbfb124"].displayName).toBe("robotics");
+    expect(s.sessions["seeed@5dbfb124"].deviceId).toBe("5dbfb124");
+  });
+
+  it("the same device via its other address does NOT create a second tab", () => {
+    const gw = fakeGateway();
+    const store = createSessionsStore(gw);
+    store.getState().register(
+      {
+        host: "192.168.2.18",
+        username: "seeed",
+        password: "pw",
+        deviceId: "5dbfb124",
+        displayName: "robotics",
+      },
+      null,
+    );
+    // Same machine-id, entered through the Tailscale address this time.
+    store.getState().register(
+      {
+        host: "100.114.170.49",
+        username: "seeed",
+        password: "pw",
+        deviceId: "5dbfb124",
+        displayName: "robotics",
+      },
+      null,
+    );
+
+    const s = store.getState();
+    expect(s.order).toEqual(["seeed@5dbfb124"]); // ONE tab
+    expect(s.sessions["seeed@5dbfb124"].host).toBe("100.114.170.49");
+  });
+
+  it("two different devices are two tabs with distinct keys", () => {
+    const store = createSessionsStore(fakeGateway());
+    store.getState().register(
+      { host: "192.168.2.18", username: "seeed", password: "pw", deviceId: "id-a", displayName: "robotics" },
+      null,
+    );
+    store.getState().register(
+      { host: "192.168.100.164", username: "seeed", password: "pw", deviceId: "id-b", displayName: "mini" },
+      null,
+    );
+    expect(store.getState().order).toEqual(["seeed@id-a", "seeed@id-b"]);
+  });
+
+  it("relaunch forwards the deviceId to the desktop gateway", async () => {
+    const gw = fakeGateway();
+    const store = createSessionsStore(gw);
+    store.getState().register(
+      { host: "192.168.2.18", username: "seeed", password: "pw", deviceId: "5dbfb124", displayName: "robotics" },
+      null,
+    );
+    gw.statuses.set("seeed@5dbfb124", { kind: "notRunning" });
+    await store.getState().pollStatuses();
+
+    store.getState().focusTab("seeed@5dbfb124");
+    await flush();
+    expect(gw.calls).toContain("launch:seeed@5dbfb124:true");
+  });
+
+  it("sessionPathLabel shows the current path kind + address", () => {
+    const store = createSessionsStore(fakeGateway());
+    store.getState().register(
+      { host: "100.114.170.49", username: "seeed", password: "pw", deviceId: "5dbfb124", displayName: "robotics" },
+      null,
+    );
+    const session = store.getState().sessions["seeed@5dbfb124"];
+    expect(sessionPathLabel(session)).toBe("Tailscale 100.114.170.49");
+
+    store.getState().register(
+      { host: "192.168.2.18", username: "seeed", password: "pw", deviceId: "id-b", displayName: "mini" },
+      null,
+    );
+    expect(sessionPathLabel(store.getState().sessions["seeed@id-b"])).toBe(
+      "LAN 192.168.2.18",
     );
   });
 });

@@ -42,9 +42,28 @@ if systemctl is-active --quiet xrdp 2>/dev/null; then
   XRDP_ACTIVE="true"
 fi
 
+XRDP_SESMAN_ACTIVE="false"
+if systemctl is-active --quiet xrdp-sesman 2>/dev/null; then
+  XRDP_SESMAN_ACTIVE="true"
+fi
+
 PORT_3389_LISTENING="false"
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':3389 '; then
   PORT_3389_LISTENING="true"
+fi
+
+PORT_3350_LISTENING="false"
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':3350 '; then
+  PORT_3350_LISTENING="true"
+fi
+
+# Ubuntu's default /etc/xrdp/key.pem ultimately lives below
+# /etc/ssl/private (root:ssl-cert, 0710). xrdp can listen on 3389 without
+# this membership, but every incoming TLS handshake then fails. Checking the
+# account's declared groups is read-only and works without sudo.
+XRDP_IN_SSL_CERT_GROUP="false"
+if id -nG xrdp 2>/dev/null | tr ' ' '\n' | grep -qx 'ssl-cert'; then
+  XRDP_IN_SSL_CERT_GROUP="true"
 fi
 
 # 会话配置：~/.xsession 含 startxfce4
@@ -60,8 +79,9 @@ if [ -f "$HOME/.xsessionrc" ] && ! sh -n "$HOME/.xsessionrc" 2>/dev/null; then
 fi
 
 export XRDP_INSTALLED XRDP_VERSION XORGXRDP_INSTALLED XORGXRDP_VERSION \
-       XFCE_INSTALLED XRDP_ENABLED XRDP_ACTIVE PORT_3389_LISTENING \
-       SESSION_CONFIGURED XSESSIONRC_OK
+       XFCE_INSTALLED XRDP_ENABLED XRDP_ACTIVE XRDP_SESMAN_ACTIVE \
+       PORT_3389_LISTENING PORT_3350_LISTENING \
+       XRDP_IN_SSL_CERT_GROUP SESSION_CONFIGURED XSESSIONRC_OK
 
 python3 - <<'PY'
 import json
@@ -81,7 +101,10 @@ print(json.dumps({
     "xfce_installed": b("XFCE_INSTALLED"),
     "xrdp_enabled": b("XRDP_ENABLED"),
     "xrdp_active": b("XRDP_ACTIVE"),
+    "xrdp_sesman_active": b("XRDP_SESMAN_ACTIVE"),
     "port_3389_listening": b("PORT_3389_LISTENING"),
+    "port_3350_listening": b("PORT_3350_LISTENING"),
+    "xrdp_in_ssl_cert_group": b("XRDP_IN_SSL_CERT_GROUP"),
     "session_configured": b("SESSION_CONFIGURED"),
     "xsessionrc_ok": b("XSESSIONRC_OK"),
 }, ensure_ascii=False, indent=2))

@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         host: host.clone(),
         port: 22,
         username,
+        device_id: None,
         password: Some(password),
     };
     let config = SshConfig::default();
@@ -59,7 +60,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
     session
-        .authenticate_password(&input.username, input.password.as_deref().unwrap_or_default())
+        .authenticate_password(
+            &input.username,
+            input.password.as_deref().unwrap_or_default(),
+        )
         .await?;
 
     let report = checker::check(&mut session).await?;
@@ -76,14 +80,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("[result] already Ready — fast path, no provision ran");
     } else {
         println!("[provision] state is {:?} — provisioning…", report.state);
-        provisioner::provision(&mut session, input.password.as_deref().unwrap_or_default(), |ev| {
-            if !matches!(
-                ev.stage,
-                ProvisionStage::Preflight | ProvisionStage::Uploading
-            ) {
-                println!("  [event] {:?}: {}", ev.stage, ev.message);
-            }
-        })
+        provisioner::provision(
+            &mut session,
+            input.password.as_deref().unwrap_or_default(),
+            |ev| {
+                if !matches!(
+                    ev.stage,
+                    ProvisionStage::Preflight | ProvisionStage::Uploading
+                ) {
+                    println!("  [event] {:?}: {}", ev.stage, ev.message);
+                }
+            },
+        )
         .await?;
         let verified = verifier::verify(&mut session).await?;
         println!("[verify] state={:?}", verified.state);

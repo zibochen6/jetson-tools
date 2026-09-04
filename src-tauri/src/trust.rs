@@ -41,6 +41,16 @@ impl TrustStoreFile {
         self.store.hosts.get(&key_id(host, port)).cloned()
     }
 
+    /// Legacy releases keyed tunneled hosts by `127.0.0.1:<ephemeral-port>`.
+    /// An exact fingerprint match lets 0.3.2 migrate that already-approved key
+    /// to the real Jetson identity without prompting again.
+    pub fn contains_fingerprint(&self, fingerprint: &str) -> bool {
+        self.store
+            .hosts
+            .values()
+            .any(|host| host.fingerprint == fingerprint)
+    }
+
     /// Insert (or overwrite — used by the explicit "Replace" flow) a host key.
     pub fn save(&mut self, key: &HostKeyInfo) -> Result<(), String> {
         self.store.hosts.insert(

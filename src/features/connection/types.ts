@@ -19,6 +19,7 @@ export type ConnectionState =
   | "connected"
   | "desktop_opened"
   | "disconnected"
+  | "naming_device"
   | "host_key_unknown"
   | "host_key_changed"
   | "error";
@@ -41,15 +42,36 @@ export type ConnectionErrorCode =
 /**
  * Device metadata. Deliberately has NO `password` field — credentials are
  * kept separate from device identity (see PRD §29 / ARCHITECTURE §7).
+ *
+ * Identity model (v3): one device = one stable id (device-tree serial,
+ * machine-id fallback) + a required display name + a mutable path list
+ * (LAN / Tailscale). The host the user typed is just this round's entry
+ * point.
  */
 export interface JetsonDevice {
+  /** The entry address used for this round's connection. */
   host: string;
+  /**
+   * Stable identity: the device-tree serial number (unique per Jetson
+   * module), falling back to `/etc/machine-id`; null when the device has
+   * neither. Real-device finding: cloned vendor images SHARE one machine-id
+   * across boards, so the serial is the primary identity.
+   */
+  deviceId?: string | null;
+  /** The device's current candidate addresses, as reported by detect.sh. */
+  paths?: DevicePath[];
   hostname?: string;
   model?: string;
   architecture?: string;
   ubuntuVersion?: string;
   jetpackVersion?: string;
   l4tVersion?: string;
+}
+
+/** One candidate address of a device, classified by network kind. */
+export interface DevicePath {
+  kind: "lan" | "tailscale" | string;
+  address: string;
 }
 
 /** Progress emitted during a connection: system state + display text. */
@@ -67,12 +89,16 @@ export interface ConnectionInput {
   username: string;
   password: string;
   remember: boolean;
+  /** Stable device identity when connecting a remembered v3 device. */
+  deviceId?: string | null;
 }
 
 export interface ConnectionError {
   code: ConnectionErrorCode;
   title: string;
   suggestions: string[];
+  /** Backend-provided technical reason (never contains credentials). */
+  detail?: string;
 }
 
 /** SSH host-key metadata for TOFU trust prompts. Non-secret (no credentials). */
@@ -114,7 +140,10 @@ export interface RemoteEnvironmentReport {
   xfce_installed: boolean;
   xrdp_enabled: boolean;
   xrdp_active: boolean;
+  xrdp_sesman_active: boolean;
   port_3389_listening: boolean;
+  port_3350_listening: boolean;
+  xrdp_in_ssl_cert_group: boolean;
   session_configured: boolean;
   xsessionrc_ok: boolean;
   issues: string[];
@@ -168,6 +197,8 @@ export interface RdpLaunchInput {
   port?: number;
   username: string;
   password: string;
+  /** Stable device identity when launching a remembered v3 device. */
+  deviceId?: string | null;
 }
 
 /**
@@ -175,7 +206,11 @@ export interface RdpLaunchInput {
  * The store maps `code` to user-facing copy — never echoes the password.
  */
 export class ConnectionFailure extends Error {
-  constructor(public readonly code: ConnectionErrorCode) {
+  /** Backend technical detail (ProbeError.message); shown verbatim in the UI. */
+  constructor(
+    public readonly code: ConnectionErrorCode,
+    public readonly detail?: string,
+  ) {
     super(`connection failed: ${code}`);
     this.name = "ConnectionFailure";
   }
@@ -264,6 +299,10 @@ const ERROR_COPY: Record<ConnectionErrorCode, ConnectionError> = {
 };
 
 /** Map an error code to its display copy. Always safe (no secrets). */
-export function describeError(code: ConnectionErrorCode): ConnectionError {
-  return ERROR_COPY[code] ?? ERROR_COPY.unknown;
+export function describeError(
+  code: ConnectionErrorCode,
+  detail?: string,
+): ConnectionError {
+  const base = ERROR_COPY[code] ?? ERROR_COPY.unknown;
+  return detail ? { ...base, detail } : base;
 }

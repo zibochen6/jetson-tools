@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         host: host.clone(),
         port: 22,
         username,
+        device_id: None,
         password: Some(password),
     };
 
@@ -96,7 +97,10 @@ async fn run(host: &str, input: &SshConnectionInput, port: u16) -> Vec<(String, 
     match ssh::connect(input, store.get_fingerprint(host, port).as_deref(), &config).await {
         Ok(ssh::SshConnectOutcome::Connected(mut s)) => {
             match s
-                .authenticate_password(&input.username, input.password.as_deref().unwrap_or_default())
+                .authenticate_password(
+                    &input.username,
+                    input.password.as_deref().unwrap_or_default(),
+                )
                 .await
             {
                 Ok(()) => match detector::detect(&mut s).await {
@@ -146,7 +150,10 @@ async fn run(host: &str, input: &SshConnectionInput, port: u16) -> Vec<(String, 
     bad.password = Some("definitely-wrong-password".into());
     match ssh::connect(&bad, store.get_fingerprint(host, port).as_deref(), &config).await {
         Ok(ssh::SshConnectOutcome::Connected(mut s)) => {
-            match s.authenticate_password(&bad.username, bad.password.as_deref().unwrap_or_default()).await {
+            match s
+                .authenticate_password(&bad.username, bad.password.as_deref().unwrap_or_default())
+                .await
+            {
                 Err(SshError::AuthRejected) => results.push((
                     "wrong password → AuthenticationFailed".into(),
                     true,
@@ -221,7 +228,10 @@ async fn run(host: &str, input: &SshConnectionInput, port: u16) -> Vec<(String, 
     match ssh::connect(input, store.get_fingerprint(host, port).as_deref(), &config).await {
         Ok(ssh::SshConnectOutcome::Connected(mut s)) => {
             match s
-                .authenticate_password(&input.username, input.password.as_deref().unwrap_or_default())
+                .authenticate_password(
+                    &input.username,
+                    input.password.as_deref().unwrap_or_default(),
+                )
                 .await
             {
                 Ok(()) => match checker::check(&mut s).await {

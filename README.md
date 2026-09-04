@@ -12,7 +12,7 @@ No HDMI. No VNC setup. No display configuration.
 
 ## 这是什么
 
-零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。0.3.0 起支持**多设备同时连接**：多台 Jetson 各开一个会话，顶部 Tab 栏一键切换桌面（连接保持、零重连）。
+零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。0.3.0 起支持**多设备同时连接**：多台 Jetson 各开一个会话，顶部 Tab 栏一键切换桌面（连接保持、零重连）。0.3.2 修复后台设备自动重连抢占当前桌面、隔离每台设备的 SSH 隧道凭据，并修复 macOS Tab 遮挡与 XRDP 假连接白屏。
 
 （XRDP / xorgxrdp / XFCE / FreeRDP / SSH Tunnel 都是实现细节，用户无需理解。）
 

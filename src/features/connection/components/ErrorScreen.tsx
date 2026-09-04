@@ -30,6 +30,14 @@ export function ErrorScreen() {
           ))}
         </ul>
       )}
+      {error.detail && (
+        <p
+          className="mt-3 max-w-full truncate rounded-md bg-slate-100 px-2.5 py-1.5 font-mono text-[11px] text-slate-500 dark:bg-slate-800/70 dark:text-slate-400"
+          title={error.detail}
+        >
+          {error.detail}
+        </p>
+      )}
       <div className="mt-7 flex gap-3">
         <Button onClick={retry}>Retry</Button>
         <Button variant="secondary" onClick={back}>

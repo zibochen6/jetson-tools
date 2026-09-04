@@ -27,7 +27,15 @@ pub struct EnvironmentFacts {
     pub xfce_installed: bool,
     pub xrdp_enabled: bool,
     pub xrdp_active: bool,
+    #[serde(default)]
+    pub xrdp_sesman_active: bool,
     pub port_3389_listening: bool,
+    #[serde(default)]
+    pub port_3350_listening: bool,
+    /// The stock Ubuntu XRDP key is readable only when `xrdp` belongs to
+    /// `ssl-cert`; without this, TCP succeeds but every TLS handshake fails.
+    #[serde(default)]
+    pub xrdp_in_ssl_cert_group: bool,
     pub session_configured: bool,
     pub xsessionrc_ok: bool,
 }
@@ -60,8 +68,17 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
     if !facts.xrdp_active {
         issues.push("xrdp service is not running".into());
     }
+    if !facts.xrdp_sesman_active {
+        issues.push("xrdp-sesman service is not running".into());
+    }
     if !facts.port_3389_listening {
         issues.push("port 3389 is not listening".into());
+    }
+    if !facts.port_3350_listening {
+        issues.push("xrdp-sesman port 3350 is not listening".into());
+    }
+    if !facts.xrdp_in_ssl_cert_group {
+        issues.push("xrdp cannot read its TLS key (missing ssl-cert group membership)".into());
     }
     if !facts.session_configured {
         issues.push("session is not configured (~/.xsession)".into());
@@ -72,7 +89,12 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
 
     let any_installed = facts.xrdp_installed || facts.xorgxrdp_installed || facts.xfce_installed;
     let all_components = facts.xrdp_installed && facts.xorgxrdp_installed && facts.xfce_installed;
-    let service_ok = facts.xrdp_enabled && facts.xrdp_active && facts.port_3389_listening;
+    let service_ok = facts.xrdp_enabled
+        && facts.xrdp_active
+        && facts.xrdp_sesman_active
+        && facts.port_3389_listening
+        && facts.port_3350_listening
+        && facts.xrdp_in_ssl_cert_group;
 
     let state = if all_components && service_ok && facts.session_configured && facts.xsessionrc_ok {
         RemoteEnvironmentState::Ready
@@ -131,7 +153,10 @@ mod tests {
             xfce_installed: true,
             xrdp_enabled: true,
             xrdp_active: true,
+            xrdp_sesman_active: true,
             port_3389_listening: true,
+            port_3350_listening: true,
+            xrdp_in_ssl_cert_group: true,
             session_configured: true,
             xsessionrc_ok: true,
         };
@@ -173,8 +198,27 @@ mod tests {
     }
 
     #[test]
+    fn classifies_broken_when_sesman_is_unavailable() {
+        let f = facts(|f| {
+            f.xrdp_sesman_active = false;
+            f.port_3350_listening = false;
+        });
+        let report = classify(&f);
+        assert_eq!(report.state, RemoteEnvironmentState::Broken);
+        assert!(report.issues.iter().any(|issue| issue.contains("sesman")));
+    }
+
+    #[test]
     fn classifies_broken_when_xsessionrc_broken() {
         let f = facts(|f| f.xsessionrc_ok = false);
         assert_eq!(classify(&f).state, RemoteEnvironmentState::Broken);
+    }
+
+    #[test]
+    fn classifies_broken_when_xrdp_cannot_read_its_tls_key() {
+        let f = facts(|f| f.xrdp_in_ssl_cert_group = false);
+        let report = classify(&f);
+        assert_eq!(report.state, RemoteEnvironmentState::Broken);
+        assert!(report.issues.iter().any(|issue| issue.contains("ssl-cert")));
     }
 }

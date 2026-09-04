@@ -22,6 +22,14 @@ pub fn stage_message(stage: ProvisionStage) -> &'static str {
     }
 }
 
+/// `sudo_preflight` has already validated and cached authorization. The
+/// bootstrap command must therefore use that ticket non-interactively instead
+/// of receiving the password a second time on stdin: sudo may skip reading it,
+/// leaving the secret to be interpreted as the first line of the shell script.
+fn bootstrap_command(path: &str) -> String {
+    format!("sudo -n bash '{path}'")
+}
+
 pub fn stage_event(stage: ProvisionStage) -> ProvisionEvent {
     ProvisionEvent {
         stage,
@@ -98,14 +106,13 @@ where
     }
 
     // Upload + run, guaranteeing cleanup on every exit path.
-    let run = provision_inner(executor, password, &path, &mut emit).await;
+    let run = provision_inner(executor, &path, &mut emit).await;
     let _ = executor.exec(&format!("rm -f '{path}'")).await;
     run
 }
 
 async fn provision_inner<E, F>(
     executor: &mut E,
-    password: &str,
     path: &str,
     emit: &mut F,
 ) -> Result<(), ProvisionError>
@@ -120,19 +127,15 @@ where
 
     let mut last_stage: Option<ProvisionStage> = None;
     let result = executor
-        .exec_with_stdin_lines(
-            &format!("sudo -S -p '' bash '{path}'"),
-            format!("{password}\n").as_bytes(),
-            |line| {
-                if let Some(event) = parse_bootstrap_line(line) {
-                    // Dedupe consecutive identical stages (start + done markers).
-                    if last_stage != Some(event.stage) {
-                        last_stage = Some(event.stage);
-                        emit(event);
-                    }
+        .exec_with_stdin_lines(&bootstrap_command(path), &[], |line| {
+            if let Some(event) = parse_bootstrap_line(line) {
+                // Dedupe consecutive identical stages (start + done markers).
+                if last_stage != Some(event.stage) {
+                    last_stage = Some(event.stage);
+                    emit(event);
                 }
-            },
-        )
+            }
+        })
         .await?;
 
     match result.exit_code {
@@ -257,5 +260,13 @@ mod tests {
             assert!(!ev.message.contains("SUPERSECRET"));
             assert!(!ev.message.contains("pw"));
         }
+    }
+
+    #[test]
+    fn bootstrap_reuses_preflight_authorization_without_replaying_password() {
+        assert_eq!(
+            bootstrap_command("/tmp/jetson-remote-bootstrap-ABC123.sh"),
+            "sudo -n bash '/tmp/jetson-remote-bootstrap-ABC123.sh'"
+        );
     }
 }

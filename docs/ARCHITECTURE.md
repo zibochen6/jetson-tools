@@ -71,7 +71,8 @@ jetson-remote/
 - **ssh/auth**：password + publickey 认证；host key 校验与 finger\_print。
 - **ssh/executor**：实现 `RemoteExecutor`（执行命令、流式返回 stdout/stderr + exit code）。
 - **ssh/tunnel**：`LocalPortForward`（direct-tcpip）—— Mac `localhost:<动态端口>` → Jetson `127.0.0.1:3389`。
-- **device/detector**：编排 `detect.sh` 并调用 parser；**device/parser**：纯函数解析 L4T / os-release / dpkg 样本（重点单测）。
+- **device/detector**：编排 `detect.sh` 并调用 parser；**device/parser**：纯函数解析 L4T / os-release / dpkg 样本（重点单测）。detect.sh 同时上报 `machine_id`（/etc/machine-id）与过滤后的当前 IPv4 路径列表（ADR-031）。
+- **remember**：设备记忆 v3（machine-id + 必填显名 + 多路径）；密码只存 0600 `secrets.json`（account=`user@deviceId`），旧 v2 `user@host` 连上即合并。
 - **bootstrap/installer+verifier**：`check_remote_environment` / `provision_remote` / `verify_remote_environment`，消费 `scripts/remote/*.sh`。
 - **rdp/client**：`RdpClient` trait；**rdp/freerdp**：`FreeRdpSidecarClient`；**rdp/process**：进程 spawn→stdin 写凭据→跟踪退出。
 - **diagnostics**：`DiagnosticsReport`（脱敏）。

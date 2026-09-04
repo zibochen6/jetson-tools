@@ -20,13 +20,19 @@ import {
   MockConnectionService,
   MockScenario,
 } from "../features/connection/service";
-import { TauriConnectionService } from "../features/connection/tauriService";
-import { ConnectionForm, isFormValid } from "../features/connection/validation";
+import { TauriConnectionService, probeDevicePaths } from "../features/connection/tauriService";
+import {
+  ConnectionForm,
+  isValidDisplayName,
+  isFormValid,
+} from "../features/connection/validation";
 import {
   DeviceMemoryGateway,
   SavedDeviceInfo,
   TauriDeviceMemoryGateway,
 } from "../features/connection/savedDevice";
+import { candidateAddresses, deviceKey } from "../features/connection/paths";
+import { useSessionsStore } from "./sessionsStore";
 
 export interface ConnectionStore {
   // snapshot state
@@ -49,12 +55,19 @@ export interface ConnectionStore {
   mode: "real" | "mock";
 
   /**
-   * The last remembered device (V0.3). `hasPassword` signals whether the
-   * backend holds a stored password — when true the form may leave the
-   * password blank and the backend resolves it itself. Never contains the
-   * actual secret.
+   * Remembered devices (identity-v3), most recently connected first.
+   * `hasPassword` signals whether the backend holds a stored password for
+   * that device — when true the form may leave the password blank and the
+   * backend resolves it itself. Never contains the actual secret.
    */
-  savedDevice: SavedDeviceInfo | null;
+  savedDevices: SavedDeviceInfo[];
+  /** The overview's add-device form is open (form cleared for a NEW device). */
+  addingDevice: boolean;
+  /**
+   * Transient notice shown on the overview (e.g. "已作为「X」连接" when the
+   * user entered another address of an already-connected device).
+   */
+  notice: string | null;
 
   // transient form (in-memory only; password is NEVER persisted)
   form: ConnectionForm;
@@ -63,11 +76,23 @@ export interface ConnectionStore {
   setForm: (partial: Partial<ConnectionForm>) => void;
   setScenario: (scenario: MockScenario) => void;
   setMode: (mode: "real" | "mock") => void;
-  /** Load persisted device memory; auto-connects when a password exists. */
+  /** Load persisted device memory; auto-connects the most recent device. */
   initRemembered: () => Promise<void>;
-  /** Forget the remembered device (JSON + OS keychain entry). */
-  forgetDevice: () => Promise<void>;
+  /** Forget ONE remembered device (JSON entry + secret-store password). */
+  forgetDevice: (device: SavedDeviceInfo) => Promise<void>;
+  /** Open the overview's add-device form with a CLEARED form. */
+  openAddDevice: () => void;
+  /** Collapse the add-device form. */
+  closeAddDevice: () => void;
+  /** Clear the transient overview notice. */
+  clearNotice: () => void;
   connect: () => Promise<void>;
+  /**
+   * Naming gate (identity-v3): the mandatory display name for a brand-new
+   * machine-id. Returns false when the name is invalid (screen shows inline
+   * error); a valid name continues the flow (prepare → launch).
+   */
+  confirmDeviceName: (name: string) => Promise<boolean>;
   trustKey: () => void;
   replaceKey: () => void;
   cancel: () => void;
@@ -86,12 +111,73 @@ export interface ConnectionStore {
   handoff: () => void;
 }
 
+/**
+ * Same physical device for local list updates: same user AND (same machine-id
+ * OR, for legacy entries without one, a shared address).
+ */
+export function sameSavedDevice(
+  a: { username: string; deviceId?: string | null; paths?: { address: string }[]; lastUsedPath?: string | null },
+  b: { username: string; deviceId?: string | null; paths?: { address: string }[]; lastUsedPath?: string | null },
+): boolean {
+  if (a.username !== b.username) return false;
+  if (a.deviceId && b.deviceId) return a.deviceId === b.deviceId;
+  const addrsA = new Set([
+    a.lastUsedPath,
+    ...(a.paths ?? []).map((p) => p.address),
+  ]);
+  return (
+    Boolean(b.lastUsedPath && addrsA.has(b.lastUsedPath)) ||
+    (b.paths ?? []).some((p) => addrsA.has(p.address))
+  );
+}
+
 export const initialForm: ConnectionForm = {
   host: "",
   username: "",
   password: "",
   remember: false,
+  deviceId: null,
 };
+
+/**
+ * The remembered device matching the form (if any) — only entries WITH a
+ * stored password can exempt the form from typing one. Identity-aware (v3):
+ * matches by deviceId, or when the typed address is one of the device's known
+ * paths (both addresses of one Jetson are one device).
+ */
+export function matchSavedDevice(
+  devices: SavedDeviceInfo[],
+  host: string,
+  username: string,
+  deviceId?: string | null,
+): SavedDeviceInfo | null {
+  const h = host.trim();
+  const u = username.trim();
+  return (
+    devices.find((d) => {
+      if (!d.hasPassword || d.username !== u) return false;
+      if (deviceId && d.deviceId && d.deviceId === deviceId) return true;
+      const addrs = [
+        d.lastUsedPath,
+        ...(d.paths ?? []).map((p) => p.address),
+      ].filter((v): v is string => Boolean(v));
+      return addrs.includes(h);
+    }) ?? null
+  );
+}
+
+/** The remembered v3 device for a machine-id, if any (regardless of secret). */
+export function findSavedByDeviceId(
+  devices: SavedDeviceInfo[],
+  deviceId: string | null | undefined,
+  username: string,
+): SavedDeviceInfo | null {
+  if (!deviceId) return null;
+  return (
+    devices.find((d) => d.deviceId === deviceId && d.username === username) ??
+    null
+  );
+}
 
 /** Map a provision stage to the ConnectionState shown while it runs. */
 export function stageToState(stage: ProvisionStage): ConnectionState | null {
@@ -119,6 +205,15 @@ const RUNNING_STAGES: ProvisionStage[] = [
   "starting_service",
 ];
 
+/**
+ * Connect failures that mean "this ADDRESS didn't work" — try the next
+ * candidate path (identity-v3 routing). Everything else surfaces as-is.
+ */
+const RETRYABLE_CANDIDATE_CODES = new Set([
+  "ssh_timeout",
+  "auth_failed",
+]);
+
 type ServiceFactory = () => ConnectionService;
 
 /**
@@ -138,6 +233,12 @@ export function createConnectionStore(
   // One service instance per connect flow, reused across prepare→launch→status
   // so a stateful mock (RDP running/exited) stays coherent.
   let currentService: ConnectionService | null = null;
+  // The input of the candidate that actually connected (may differ from the
+  // form when an alternate path won). Drives prepare/launch/memory sync.
+  let connectedInput: ConnectionInput | null = null;
+  // The candidate whose host-key prompt is pending — a trust/replace decision
+  // must re-dial THAT address, not re-run the whole candidate sweep.
+  let pendingDecisionHost: string | null = null;
   // Bounded auto-retry for RDP connection failures (e.g. macOS "Local Network"
   // permission not yet granted on first launch): re-launch a few times so the
   // desktop opens automatically once the user clicks Allow.
@@ -156,9 +257,47 @@ export function createConnectionStore(
     const resolveMemory = (): DeviceMemoryGateway =>
       injectedMemory ?? new TauriDeviceMemoryGateway();
 
+    /**
+     * Candidate addresses for this connect: the typed entry host plus every
+     * known path of the matching remembered device. Ordered by parallel TCP
+     * probe (lowest RTT first) when the real backend is available; the typed
+     * host is always kept, even when unreachable.
+     */
+    const candidatesFor = async (
+      form: ConnectionForm,
+      saved: SavedDeviceInfo | null,
+      signal: AbortSignal,
+    ): Promise<string[]> => {
+      const entry = form.host.trim();
+      const known = saved ? (saved.paths ?? []).map((p) => p.address) : [];
+      const candidates = candidateAddresses(entry, known);
+      if (candidates.length <= 1 || signal.aborted) return candidates;
+
+      // Parallel TCP :22 probe → RTT-ordered. Advisory: unreachable entries
+      // still stay in the list (at the end) so the typed address is tried.
+      if (get().mode !== "real") return candidates;
+      const probes = (await probeDevicePaths(candidates)) ?? [];
+      if (signal.aborted) return candidates;
+      const byAddr = new Map(probes.map((p) => [p.address, p]));
+      const reachable = candidates
+        .filter((a) => byAddr.get(a)?.reachable)
+        .sort(
+          (a, b) => (byAddr.get(a)?.rttMs ?? 0) - (byAddr.get(b)?.rttMs ?? 0),
+        );
+      const unreachable = candidates.filter((a) => !reachable.includes(a));
+      const ordered = [...reachable, ...unreachable];
+      return ordered.length > 0 ? ordered : candidates;
+    };
+
     const doConnect = async (decision?: HostKeyDecision): Promise<void> => {
-      const { form, scenario, savedDevice } = get();
-      if (!isFormValid(form, savedDevice)) return;
+      const { form, scenario } = get();
+      const saved = matchSavedDevice(
+        get().savedDevices,
+        form.host,
+        form.username,
+        form.deviceId,
+      );
+      if (!isFormValid(form, saved)) return;
 
       abort?.abort();
       abort = new AbortController();
@@ -175,68 +314,182 @@ export function createConnectionStore(
         provisioningLocked: false,
         rdpStatus: null,
         lastFailure: null,
+        notice: null,
       });
 
       currentService = resolveService();
       const service = currentService;
-      const input = {
-        host: form.host,
-        username: form.username,
-        password: form.password,
-        remember: form.remember,
-      };
 
-      try {
-        const outcome = await service.connect(input, {
-          scenario,
-          signal,
-          hostKeyDecision: decision,
-          onProgress: (p) => {
-            if (signal.aborted) return;
-            set({ state: p.state, progress: p });
-          },
-        });
+      // A trust/replace decision re-dials exactly the address that prompted.
+      const candidates = decision && pendingDecisionHost
+        ? [pendingDecisionHost]
+        : await candidatesFor(form, saved, signal);
+      if (signal.aborted) return;
 
+      let lastError: ConnectionFailure | null = null;
+      let connected: { device: JetsonDevice; input: ConnectionInput } | null =
+        null;
+
+      for (const host of candidates) {
         if (signal.aborted) return;
+        const input: ConnectionInput = {
+          host,
+          username: form.username,
+          password: form.password,
+          remember: form.remember,
+          deviceId: form.deviceId ?? null,
+        };
+        try {
+          const outcome = await service.connect(input, {
+            scenario,
+            signal,
+            hostKeyDecision: decision,
+            onProgress: (p) => {
+              if (signal.aborted) return;
+              set({ state: p.state, progress: p });
+            },
+          });
 
-        switch (outcome.kind) {
-          case "device": {
-            const device = outcome.device;
-            set({
-              device,
-              state: "checking_environment",
-              progress: {
-                state: "checking_environment",
-                message: "Checking remote desktop",
-              },
-            });
-            // Auth verified — record/forget per the remember checkbox.
-            syncMemoryAfterConnect(input);
-            await prepareDevice(service, input, scenario, signal);
-            if (signal.aborted) return;
-            // Desktop now ready → open it (auto-launch, PRD §52).
-            if (get().state === "ready") {
-              await get().launchDesktop();
-            }
-            break;
+          if (signal.aborted) return;
+
+          switch (outcome.kind) {
+            case "device":
+              connected = { device: outcome.device, input };
+              break;
+            case "host_key_unknown":
+              // The user must decide; remember WHICH address prompted so the
+              // decision re-dials it (not the whole candidate sweep).
+              pendingDecisionHost = host;
+              set({
+                state: "host_key_unknown",
+                hostKey: outcome.key,
+                previousKey: null,
+                progress: null,
+              });
+              return;
+            case "host_key_changed":
+              pendingDecisionHost = host;
+              set({
+                state: "host_key_changed",
+                hostKey: outcome.current,
+                previousKey: outcome.previous,
+                progress: null,
+              });
+              return;
           }
-          case "host_key_unknown":
+          break; // connected or handled above
+        } catch (err) {
+          if (signal.aborted || isAbortError(err)) {
             set({
-              state: "host_key_unknown",
-              hostKey: outcome.key,
-              previousKey: null,
+              state: "idle",
               progress: null,
+              provisioningLocked: false,
+              lastFailure: null,
             });
-            break;
-          case "host_key_changed":
-            set({
-              state: "host_key_changed",
-              hostKey: outcome.current,
-              previousKey: outcome.previous,
-              progress: null,
-            });
-            break;
+            return;
+          }
+          const failure =
+            err instanceof ConnectionFailure
+              ? err
+              : new ConnectionFailure("unknown");
+          lastError = failure;
+          // "This address didn't work" → try the next path of the same device.
+          if (RETRYABLE_CANDIDATE_CODES.has(failure.code)) {
+            continue;
+          }
+          throw failure;
         }
+      }
+
+      if (!connected) {
+        set({
+          state: "error",
+          error: lastError
+            ? describeError(lastError.code, lastError.detail)
+            : describeError("unknown"),
+          lastFailure: "connect",
+        });
+        return;
+      }
+
+      const { device } = connected;
+      // Enrich with the discovered device id: everything after the probe
+      // (prepare, launch, tunnel key, TOFU identity, memory) is keyed by the
+      // stable deviceId, not by the entry address.
+      const input: ConnectionInput = {
+        ...connected.input,
+        deviceId: device.deviceId ?? connected.input.deviceId ?? null,
+      };
+      connectedInput = input;
+      pendingDecisionHost = null;
+      set({ device });
+
+      // A session for this machine-id is already live (the user entered
+      // another address of the same board): reuse it, never open a second
+      // desktop for one device.
+      const key = deviceKey(input.username, device.deviceId, device.host);
+      const sessions = useSessionsStore.getState();
+      const existing = sessions.sessions[key];
+      if (existing) {
+        sessions.focusTab(key);
+        set({
+          state: "idle",
+          progress: null,
+          notice: existing.displayName
+            ? `已作为「${existing.displayName}」连接`
+            : "该设备已在连接中",
+          device: null,
+          error: null,
+        });
+        // Keep the device memory fresh (paths changed?) without reopening.
+        syncMemoryAfterConnect(input, device, existing.displayName ?? null);
+        return;
+      }
+
+      // Mandatory naming gate for a brand-new device id (identity-v3): the
+      // display name is required BEFORE provision / desktop.
+      const savedNow = findSavedByDeviceId(
+        get().savedDevices,
+        device.deviceId,
+        input.username,
+      );
+      const needsName =
+        !!device.deviceId && !(savedNow?.displayName ?? "").trim().length;
+      if (needsName) {
+        set({
+          state: "naming_device",
+          progress: null,
+        });
+        return;
+      }
+
+      // Auth verified — record/forget per the remember checkbox (paths are
+      // refreshed from what the device just reported).
+      syncMemoryAfterConnect(input, device, savedNow?.displayName ?? null);
+
+      await prepareAndLaunch(service, input, scenario, signal);
+    };
+
+    /**
+     * Prepare (check → provision → verify) then auto-launch the desktop,
+     * mapping failures to the error screen. Shared by the normal connect flow
+     * and the post-naming continuation.
+     */
+    const prepareAndLaunch = async (
+      service: ConnectionService,
+      input: ConnectionInput,
+      scenario: MockScenario,
+      signal: AbortSignal,
+    ): Promise<void> => {
+      set({
+        state: "checking_environment",
+        progress: {
+          state: "checking_environment",
+          message: "Checking remote desktop",
+        },
+      });
+      try {
+        await prepareDevice(service, input, scenario, signal);
       } catch (err) {
         if (signal.aborted || isAbortError(err)) {
           set({
@@ -248,7 +501,7 @@ export function createConnectionStore(
         } else if (err instanceof ConnectionFailure) {
           set({
             state: "error",
-            error: describeError(err.code),
+            error: describeError(err.code, err.detail),
             lastFailure: "connect",
           });
         } else {
@@ -258,6 +511,12 @@ export function createConnectionStore(
             lastFailure: "connect",
           });
         }
+        return;
+      }
+      if (signal.aborted) return;
+      // Desktop now ready → open it (auto-launch, PRD §52).
+      if (get().state === "ready") {
+        await get().launchDesktop();
       }
     };
 
@@ -265,25 +524,50 @@ export function createConnectionStore(
      * Sync the device memory after a successful device probe (auth verified).
      * Best-effort by design (PRD R8): a memory I/O failure never breaks the
      * connection flow, it only affects the next launch's auto-reconnect.
+     * Identity-v3: keyed by machine-id; the device's CURRENT path list
+     * overwrites the stored one (stale addresses dropped); legacy v2
+     * duplicates of the same board are merged by the backend.
      */
-    const syncMemoryAfterConnect = (input: ConnectionInput): void => {
-      const { savedDevice } = get();
+    const syncMemoryAfterConnect = (
+      input: ConnectionInput,
+      device: JetsonDevice,
+      displayName: string | null,
+    ): void => {
       const memory = resolveMemory();
+      const paths = device.paths ?? [];
+      const entry: SavedDeviceInfo = {
+        deviceId: device.deviceId ?? null,
+        username: input.username,
+        displayName,
+        paths,
+        lastUsedPath: input.host,
+        hasPassword: true,
+      };
 
-      if (input.remember && input.password !== "") {
+      const upsertLocal = () =>
+        set((s) => ({
+          savedDevices: [
+            entry,
+            ...s.savedDevices.filter((d) => !sameSavedDevice(d, entry)),
+          ],
+        }));
+
+      if (input.remember) {
+        // Optimistic local upsert FIRST: the session handoff reads the
+        // display name from savedDevices synchronously right after launch.
+        // A failing disk write only affects the next app run (best-effort).
+        upsertLocal();
         void (async () => {
           try {
             await memory.save({
-              host: input.host,
-              username: input.username,
+              deviceId: entry.deviceId,
+              username: entry.username,
+              displayName: entry.displayName,
+              paths: entry.paths,
+              entryHost: input.host,
+              // Blank password = the memory already holds the secret; the
+              // backend keeps it and only refreshes identity + paths.
               password: input.password,
-            });
-            set({
-              savedDevice: {
-                host: input.host,
-                username: input.username,
-                hasPassword: true,
-              },
             });
           } catch {
             // best-effort: connection already succeeded
@@ -292,23 +576,24 @@ export function createConnectionStore(
         return;
       }
 
-      if (input.remember) {
-        // Saved-password connect (blank password): the memory already holds
-        // the secret — nothing to rewrite.
-        return;
-      }
-
-      // remember unchecked: connecting to the SAME remembered device means
-      // the user wants it forgotten (PRD R6). Other devices are untouched.
-      if (
-        savedDevice &&
-        savedDevice.host === input.host &&
-        savedDevice.username === input.username
-      ) {
+      // remember unchecked: connecting to a remembered device means the user
+      // wants THAT one forgotten (PRD R6). Other devices are untouched.
+      const remembered =
+        findSavedByDeviceId(get().savedDevices, device.deviceId, input.username) ??
+        matchSavedDevice(get().savedDevices, input.host, input.username);
+      if (remembered) {
         void (async () => {
           try {
-            await memory.forget();
-            set({ savedDevice: null });
+            await memory.forget({
+              deviceId: remembered.deviceId,
+              host:
+                (remembered.paths ?? []).find((p) => p.address === input.host)
+                  ?.address ?? remembered.lastUsedPath,
+              username: remembered.username,
+            });
+            set((s) => ({
+              savedDevices: s.savedDevices.filter((d) => d !== remembered),
+            }));
           } catch {
             // best-effort
           }
@@ -370,9 +655,29 @@ export function createConnectionStore(
       }
     };
 
+    /** Continue the flow after the naming gate accepted a display name. */
+    const continueAfterNaming = async (displayName: string): Promise<void> => {
+      const { device, scenario } = get();
+      const input = connectedInput;
+      if (!device || !input) return;
+      const service = currentService ?? (currentService = resolveService());
+      const signal = abort?.signal ?? new AbortController().signal;
+
+      // Persist identity + name (+ password when typed) before provisioning.
+      syncMemoryAfterConnect(input, device, displayName);
+
+      await prepareAndLaunch(service, input, scenario, signal);
+    };
+
     const launchDesktop = async (): Promise<void> => {
-      const { form, device, savedDevice } = get();
-      if (!device || !isFormValid(form, savedDevice)) return;
+      const { form, device } = get();
+      const saved = matchSavedDevice(
+        get().savedDevices,
+        form.host,
+        form.username,
+        form.deviceId,
+      );
+      if (!device || !isFormValid(form, saved)) return;
 
       rdpRetryCount = 0;
       rdpRetryPending = false;
@@ -382,15 +687,33 @@ export function createConnectionStore(
         progress: { state: "launching_rdp", message: "Opening desktop" },
       });
       try {
+        // Launch against the address that actually connected (an alternate
+        // path may have won the RTT race), keyed by the stable device id.
+        const input = connectedInput ?? {
+          host: form.host,
+          username: form.username,
+          password: form.password,
+          remember: form.remember,
+          deviceId: form.deviceId ?? null,
+        };
         await service.launch(
           {
-            host: form.host,
-            username: form.username,
-            password: form.password,
+            host: input.host,
+            username: input.username,
+            password: input.password,
+            deviceId: device.deviceId ?? input.deviceId ?? null,
           },
-          // Keyed session (V0.4 multi-device): one desktop per device, quick
-          // switchable via the tab bar without reconnecting.
-          { scenario: get().scenario, sessionId: `${form.username}@${form.host}` },
+          // Keyed session (identity-v3): one desktop per DEVICE, quick
+          // switchable via the tab bar without reconnecting. Both addresses
+          // of one Jetson map to the same key.
+          {
+            scenario: get().scenario,
+            sessionId: deviceKey(
+              input.username,
+              device.deviceId ?? input.deviceId,
+              input.host,
+            ),
+          },
         );
         set({
           state: "desktop_opened",
@@ -402,7 +725,7 @@ export function createConnectionStore(
           state: "error",
           error:
             err instanceof ConnectionFailure
-              ? describeError(err.code)
+              ? describeError(err.code, err.detail)
               : describeError("rdp_failed"),
           lastFailure: "launch",
           rdpStatus: null,
@@ -505,7 +828,9 @@ export function createConnectionStore(
       lastFailure: null,
       scenario: "success",
       mode: "real",
-      savedDevice: null,
+      savedDevices: [],
+      addingDevice: false,
+      notice: null,
       form: initialForm,
 
       setForm: (partial) => set((s) => ({ form: { ...s.form, ...partial } })),
@@ -518,36 +843,60 @@ export function createConnectionStore(
         autoConnectAttempted = true;
         if (get().state !== "idle") return;
 
-        const saved = await resolveMemory().load().catch(() => null);
-        if (!saved) return;
+        const saved = await resolveMemory().loadAll().catch(() => []);
+        if (saved.length === 0) return;
+        set({ savedDevices: saved });
 
+        // Only the most recent device may auto-connect; launching every
+        // remembered desktop at once would pop N windows. If its secret is
+        // gone, still prefill that device so the user can replace it.
+        const mru = saved[0];
+        const entry =
+          mru.lastUsedPath ?? (mru.paths ?? [])[0]?.address ?? "";
         set({
-          savedDevice: saved,
           form: {
-            host: saved.host,
-            username: saved.username,
+            host: entry,
+            username: mru.username,
             password: "",
             remember: true,
+            deviceId: mru.deviceId ?? null,
           },
         });
-        if (saved.hasPassword) {
-          void get().connect();
-        }
+        if (mru.hasPassword) void get().connect();
       },
 
-      forgetDevice: async () => {
+      forgetDevice: async (device) => {
         try {
-          await resolveMemory().forget();
+          await resolveMemory().forget({
+            deviceId: device.deviceId,
+            host: device.lastUsedPath ?? (device.paths ?? [])[0]?.address ?? null,
+            username: device.username,
+          });
         } catch {
           // best-effort
         }
         set((s) => ({
-          savedDevice: null,
-          form: { ...s.form, password: "", remember: false },
+          savedDevices: s.savedDevices.filter((d) => !sameSavedDevice(d, device)),
         }));
       },
 
+      openAddDevice: () => {
+        // A CLEARED form: adding a device must never prefill the credentials
+        // of an already-connected one (V0.4 fix).
+        set({
+          addingDevice: true,
+          form: { ...initialForm, remember: true },
+        });
+      },
+      closeAddDevice: () => set({ addingDevice: false }),
+      clearNotice: () => set({ notice: null }),
+
       connect: () => doConnect(undefined),
+      confirmDeviceName: async (name) => {
+        if (!isValidDisplayName(name)) return false;
+        await continueAfterNaming(name.trim());
+        return true;
+      },
       trustKey: () => {
         const key = get().hostKey;
         if (key) void doConnect({ action: "trustAndConnect", key });
@@ -571,6 +920,8 @@ export function createConnectionStore(
       },
       back: () => {
         abort?.abort();
+        connectedInput = null;
+        pendingDecisionHost = null;
         set({
           state: "idle",
           progress: null,
@@ -591,6 +942,7 @@ export function createConnectionStore(
         // The desktop stays alive under the sessions store's key; only the
         // wizard resets (no service.close() — that would kill the desktop).
         abort?.abort();
+        connectedInput = null;
         set({
           state: "idle",
           progress: null,

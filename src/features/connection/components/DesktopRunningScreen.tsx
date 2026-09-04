@@ -1,13 +1,24 @@
 import { useEffect } from "react";
 import { Button } from "../../../components/Button";
 import { DeviceCard } from "../../../components/DeviceCard";
-import { useConnectionStore } from "../../../stores/connectionStore";
+import {
+  findSavedByDeviceId,
+  useConnectionStore,
+} from "../../../stores/connectionStore";
 
 export function DesktopRunningScreen() {
   const device = useConnectionStore((s) => s.device);
   const closeDesktop = useConnectionStore((s) => s.closeDesktop);
   const disconnect = useConnectionStore((s) => s.disconnect);
   const refreshRdpStatus = useConnectionStore((s) => s.refreshRdpStatus);
+  const displayName = useConnectionStore(
+    (s) =>
+      findSavedByDeviceId(
+        s.savedDevices,
+        device?.deviceId ?? null,
+        s.form.username,
+      )?.displayName ?? null,
+  );
 
   // Poll the sidecar so we return to "ready" when the window is closed.
   useEffect(() => {
@@ -37,7 +48,7 @@ export function DesktopRunningScreen() {
       </p>
       {device && (
         <div className="mt-4 w-full text-left">
-          <DeviceCard device={device} />
+          <DeviceCard device={device} displayName={displayName} />
         </div>
       )}
       <div className="mt-7 flex gap-3">

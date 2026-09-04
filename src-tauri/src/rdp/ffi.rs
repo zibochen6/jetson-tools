@@ -47,6 +47,7 @@ pub struct jr_cert_callbacks {
 
 #[repr(C)]
 pub struct jr_connect_params {
+    pub certificate_name: *const c_char,
     pub host: *const c_char,
     pub port: u16,
     pub username: *const c_char,
@@ -120,6 +121,7 @@ extern "C" {
     pub fn jr_view_set_fill(view: *mut c_void, r: u8, g: u8, b: u8);
     pub fn jr_view_attach_input(view: *mut c_void, session: *mut c_void);
     pub fn jr_window_content_size(ns_window: *mut c_void, w: *mut c_double, h: *mut c_double);
+    pub fn jr_window_safe_area_top(ns_window: *mut c_void) -> c_double;
     pub fn jr_session_set_clipboard_text(s: *mut jr_session, utf8: *const c_char) -> c_int;
     pub fn jr_clipboard_sync_start(session: *mut c_void);
     pub fn jr_clipboard_sync_stop();

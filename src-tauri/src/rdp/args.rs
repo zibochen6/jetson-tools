@@ -27,6 +27,7 @@ pub fn build(binary: &str, config: &RdpConnectionConfig, title: &str) -> FreeRdp
         format!("/u:{}", config.username),
         format!("/p:{}", config.password), // NEVER in argv — stdin only
         "/cert:tofu".to_string(),          // TOFU, never /cert:ignore in product
+        format!("/cert:name:{}", config.certificate_name),
         format!("/t:{title}"),
     ];
     if config.clipboard {
@@ -48,6 +49,7 @@ mod tests {
 
     fn config() -> RdpConnectionConfig {
         RdpConnectionConfig {
+            certificate_name: "192.168.100.164".into(),
             host: "192.168.100.164".into(),
             port: 3389,
             username: "seeed".into(),
@@ -90,6 +92,7 @@ mod tests {
         let args = build("sdl-freerdp", &config(), "Jetson Remote — 1.2.3.4");
         let joined = args.stdin.join("\n");
         assert!(joined.contains("/v:192.168.100.164:3389"));
+        assert!(joined.contains("/cert:name:192.168.100.164"));
         assert!(joined.contains("/u:seeed"));
         assert!(joined.contains("+clipboard"));
         assert!(joined.contains("+dynamic-resolution"));

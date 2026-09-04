@@ -1,10 +1,18 @@
 import { JetsonDevice } from "../features/connection/types";
+import { pathLabel } from "../features/connection/paths";
 
 /**
  * Adapted from catalog component #5 (Feature Card): icon chip + title +
- * metadata, hover lift. Props unchanged from the original component.
+ * metadata, hover lift. Identity-v3: `displayName` (the mandatory device
+ * name) is the title when known; the current path is small print.
  */
-export function DeviceCard({ device }: { device: JetsonDevice }) {
+export function DeviceCard({
+  device,
+  displayName,
+}: {
+  device: JetsonDevice;
+  displayName?: string | null;
+}) {
   const details = [
     device.model,
     device.jetpackVersion && `JetPack ${device.jetpackVersion}`,
@@ -26,13 +34,13 @@ export function DeviceCard({ device }: { device: JetsonDevice }) {
       </span>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-          {device.hostname ?? device.host}
+          {displayName?.trim() || device.hostname || device.host}
         </div>
-        {details.length > 0 && (
-          <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
-            {details.join(" · ")}
-          </div>
-        )}
+        {/* Identity-v3: the current path (LAN / Tailscale) is small print. */}
+        <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+          {pathLabel(device.host)}
+          {details.length > 0 && ` · ${details.join(" · ")}`}
+        </div>
       </div>
     </div>
   );

@@ -183,3 +183,31 @@
 - **密码流动**：wire 层 `SshConnectionInput.password` / `RdpConnectionRequest.password` 改 `Option<String>`；None = 后端从 Keychain 解析（`remember::resolve_password`），**已存密码永不回传前端**。新错误码 `SAVED_PASSWORD_MISSING` / `RDP_PASSWORD_MISSING` → 前端 `saved_password_missing`（提示回表单输密码）。
 - **替代方案**：`security` CLI（密码会进 argv，违反 PRD §67，否决）；security-framework 手写（SecItem 生命周期/弃用边界易错）；zustand persist / 明文 localStorage（违反 ADR-012，否决）。
 - **后果**：`keyring` 依赖仅 macOS target；未签名/dev 构建可能每次二进制变化弹 Keychain 访问授权（签名包无此问题，记入 KNOWN_ISSUES）。Rust 侧 `SshConnectionInput` Debug 恒 redact（None 也显示 `<redacted>`）。
+## ADR-031 — 设备身份 v3：machine-id + 必填显名 + 多路径（LAN/Tailscale 自动选路）
+
+- **决策**：一台设备 = 稳定 `deviceId` + 必填 `displayName` + 可变 `paths[{kind,address}]`。
+  `deviceId` 优先取 `/proc/device-tree/serial-number`（Jetson 模组出厂序列号，每板唯一、重装不变），
+  无序列号时回退 `/etc/machine-id`，两者皆无则回退 host 身份（legacy）。
+  **真机发现**：两台测试 J501 为同一克隆镜像，`/etc/machine-id` 完全相同（hostname 也同为
+  `seeed-desktop`），machine-id 单独作身份会把两块板并成一台 —— 序列号是必要修正。
+  记忆库升 v3（`{"version":3,"devices":[…]}`，写永远 v3；v2/v1 只读透传为 deviceId=null 的 legacy 行）；
+  密码 account 改 `user@deviceId`（legacy 行沿用 `user@host`）。会话 id、隧道 key、TOFU 身份
+  统一 `username@deviceId`（缺 machine-id 时回退 host）。用户输入地址只是入口：连接前对所有候选
+  （记忆 paths ∪ 本轮输入）并行 TCP 探测 `:22`（800ms），按 RTT 升序尝试，SSH 超时/认证失败换下一条；
+  成功后用 detect.sh 上报的当前 IPv4 列表**覆盖** paths（过滤回环/docker 172.17/16/USB gadget
+  192.168.55/24/链路本地；100.64/10 → tailscale，其余私网 → lan，公网丢弃）。
+- **触发**：同一块板 LAN 与 Tailscale 两个 IP 曾被记成两台设备、开两个桌面、存两份密码。
+- **显名**：新 machine-id 在探测成功后、provision/开桌面之前弹必填起名屏（不可跳过）；
+  Tab/总览/已记住列表主标题只显示显名，当前路径做小字。已连设备再拿另一条 IP 进来 →
+  复用 keyed session（focus 既有 Tab + 提示「已作为「某某」连接」），禁止一板两桌面。
+- **合并**：连上后把同 username 且地址相交的 legacy v2 行合并进 machine-id 行：
+  secret 复制到 `user@deviceId`（目标缺失时）→ 删除 legacy 行与旧 secret。
+- **认证**：控制面只走密码；russh 传输错误中含 permission denied / authentication 字样的一律映射
+  `AuthenticationFailed`（不向 UI 露出 PublicKey remaining-methods）；`resolve_password` 有 deviceId
+  时精确取 `user@deviceId`，多设备时仍禁止用 127.0.0.1 猜密码。
+- **替代方案**：hostname 作稳定 ID（两台板可能同为 `seeed-desktop`，否决）；SSH host key 指纹作
+  身份（重装机即变、且 TOFU 前拿不到，否决）；网段扫描发现路径（越权、慢，否决——只记上报地址）。
+- **后果**：remembered.json / secrets.json account 键变更（自动迁移，旧密码连上即合并）；
+  hosts.json TOFU 键从 `host:22` 变为 `deviceId:22`（按指纹一次性自动迁移，不重复弹窗）；
+  `probe_device_paths` 新 IPC；detect.sh 输出新增 `machine_id` / `ipv4_addresses`（旧后端字段兼容，
+  serde default）。

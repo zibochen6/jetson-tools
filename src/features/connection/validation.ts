@@ -42,25 +42,53 @@ export interface ConnectionForm {
   username: string;
   password: string;
   remember: boolean;
+  /**
+   * Stable device identity when connecting a remembered v3 device (quick
+   * connect). `null` for a fresh typed address — the backend discovers it.
+   */
+  deviceId?: string | null;
+}
+
+/** Display name rules for the mandatory naming screen (≤32 chars, non-blank). */
+export const MAX_DISPLAY_NAME = 32;
+
+export function isValidDisplayName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && trimmed.length <= MAX_DISPLAY_NAME;
 }
 
 /**
  * A remembered device with a usable stored password exempts the form from the
- * empty-password rule: the backend resolves the secret itself (V0.3).
+ * empty-password rule: the backend resolves the secret itself (V0.3). Matching
+ * is identity-aware (v3): by deviceId, or by any of the device's known paths.
  */
 export interface SavedPasswordSource {
-  host: string;
+  host?: string | null;
   username: string;
   hasPassword?: boolean;
+  deviceId?: string | null;
+  paths?: { address: string }[];
+  lastUsedPath?: string | null;
+}
+
+function savedCoversHost(saved: SavedPasswordSource, host: string): boolean {
+  const addrs = [
+    saved.host,
+    saved.lastUsedPath,
+    ...(saved.paths ?? []).map((p) => p.address),
+  ].filter((v): v is string => Boolean(v));
+  return addrs.includes(host);
 }
 
 function matchesSaved(form: ConnectionForm, saved?: SavedPasswordSource | null): boolean {
-  return (
-    !!saved &&
-    saved.hasPassword === true &&
-    saved.host === form.host.trim() &&
-    saved.username === form.username.trim()
-  );
+  if (!saved || saved.hasPassword !== true) return false;
+  if (saved.username !== form.username.trim()) return false;
+  // Preferred match: the stable identity (v3 devices).
+  if (form.deviceId && saved.deviceId && saved.deviceId === form.deviceId) {
+    return true;
+  }
+  // Fallback: the typed address is one of this device's known paths.
+  return savedCoversHost(saved, form.host.trim());
 }
 
 export function validateConnectionForm(

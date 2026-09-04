@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
+  Channel: class {
+    onmessage: ((event: unknown) => void) | null = null;
+  },
 }));
 
 import { TauriDeviceMemoryGateway } from "./savedDevice";
@@ -12,48 +15,76 @@ describe("TauriDeviceMemoryGateway", () => {
     invokeMock.mockReset();
   });
 
-  it("load returns the typed device status", async () => {
-    invokeMock.mockResolvedValue({
-      host: "192.168.100.164",
+  it("loadAll returns typed devices in backend order", async () => {
+    invokeMock.mockResolvedValue([{
+      deviceId: "5dbfb124",
       username: "seeed",
+      displayName: "robotics",
+      paths: [{ kind: "lan", address: "192.168.2.18" }],
+      lastUsedPath: "192.168.2.18",
       hasPassword: true,
-    });
-    const out = await new TauriDeviceMemoryGateway().load();
-    expect(invokeMock).toHaveBeenCalledWith("get_remembered_device");
-    expect(out).toEqual({
-      host: "192.168.100.164",
+    }]);
+    const out = await new TauriDeviceMemoryGateway().loadAll();
+    expect(invokeMock).toHaveBeenCalledWith("get_remembered_devices");
+    expect(out).toEqual([{
+      deviceId: "5dbfb124",
       username: "seeed",
+      displayName: "robotics",
+      paths: [{ kind: "lan", address: "192.168.2.18" }],
+      lastUsedPath: "192.168.2.18",
       hasPassword: true,
-    });
+    }]);
   });
 
-  it("load returns null when the backend has no memory", async () => {
-    invokeMock.mockResolvedValue(null);
-    expect(await new TauriDeviceMemoryGateway().load()).toBeNull();
+  it("loadAll returns an empty list when the backend has no memory", async () => {
+    invokeMock.mockResolvedValue([]);
+    expect(await new TauriDeviceMemoryGateway().loadAll()).toEqual([]);
   });
 
-  it("load degrades to null on any failure (browser dev / io error)", async () => {
+  it("loadAll degrades to an empty list on any failure (browser dev / io error)", async () => {
     invokeMock.mockRejectedValue(new Error("not in Tauri"));
-    expect(await new TauriDeviceMemoryGateway().load()).toBeNull();
+    expect(await new TauriDeviceMemoryGateway().loadAll()).toEqual([]);
   });
 
-  it("save forwards identity + password once", async () => {
+  it("save forwards the v3 identity (deviceId + name + paths) once", async () => {
     invokeMock.mockResolvedValue(undefined);
     await new TauriDeviceMemoryGateway().save({
-      host: "h",
-      username: "u",
+      deviceId: "5dbfb124",
+      username: "seeed",
+      displayName: "robotics",
+      paths: [
+        { kind: "lan", address: "192.168.2.18" },
+        { kind: "tailscale", address: "100.114.170.49" },
+      ],
+      entryHost: "192.168.2.18",
       password: "secret",
     });
     expect(invokeMock).toHaveBeenCalledWith("remember_device", {
-      host: "h",
-      username: "u",
-      password: "secret",
+      input: {
+        deviceId: "5dbfb124",
+        username: "seeed",
+        displayName: "robotics",
+        paths: [
+          { kind: "lan", address: "192.168.2.18" },
+          { kind: "tailscale", address: "100.114.170.49" },
+        ],
+        entryHost: "192.168.2.18",
+        password: "secret",
+      },
     });
   });
 
-  it("forget invokes the delete command", async () => {
+  it("forget invokes the delete command by identity", async () => {
     invokeMock.mockResolvedValue(undefined);
-    await new TauriDeviceMemoryGateway().forget();
-    expect(invokeMock).toHaveBeenCalledWith("forget_remembered_device");
+    await new TauriDeviceMemoryGateway().forget({
+      deviceId: "5dbfb124",
+      host: "192.168.2.18",
+      username: "seeed",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("forget_remembered_device", {
+      deviceId: "5dbfb124",
+      host: "192.168.2.18",
+      username: "seeed",
+    });
   });
 });

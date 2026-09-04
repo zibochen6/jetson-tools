@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -7,10 +8,14 @@ use crate::rdp::client::RdpClient;
 use crate::rdp::error::{map_rdp_error, RdpError, RdpIpcError};
 use crate::rdp::freerdp::FreeRdpSidecarClient;
 use crate::rdp::manager::RdpProcessManager;
-use crate::rdp::session::RdpSessionManager;
+use crate::rdp::session::{RdpSessionManager, SessionLaunchMode};
 use crate::rdp::types::{RdpConnectionConfig, RdpConnectionRequest, RdpLaunchResult, RdpStatus};
 use crate::remember::{self, FileSecretStore, RememberedDeviceStore};
-use crate::tunnel::{TunnelError, TunnelManager};
+use crate::ssh::client as ssh;
+use crate::ssh::executor::RemoteExecutor;
+use crate::ssh::types::{SshConfig, SshConnectionInput};
+use crate::trust::TrustStoreFile;
+use crate::tunnel::{TunnelEndpoints, TunnelError, TunnelManager};
 
 /// DEV-only backend selector: `RDP_ENGINE=sidecar` forces the Phase 4A sidecar;
 /// anything else (the default) uses the embedded libfreerdp native surface.
@@ -23,6 +28,15 @@ fn engine() -> Engine {
     match std::env::var("RDP_ENGINE").as_deref() {
         Ok("sidecar") => Engine::Sidecar,
         _ => Engine::Embedded,
+    }
+}
+
+/// Stable per-device key for the tunnel: `username@deviceId` when known,
+/// `username@host` otherwise (legacy).
+fn device_key(host: &str, device_id: Option<&str>, username: &str) -> String {
+    match device_id.filter(|i| !i.is_empty()) {
+        Some(id) => format!("{username}@{id}"),
+        None => format!("{username}@{host}"),
     }
 }
 
@@ -69,6 +83,7 @@ pub async fn launch_remote_desktop(
     let password = remember::resolve_password(
         &remembered_store,
         &*secrets,
+        request.device_id.as_deref(),
         &request.host,
         &request.username,
         request.password.as_deref(),
@@ -76,16 +91,20 @@ pub async fn launch_remote_desktop(
     .map_err(|_| map_rdp_error(RdpError::PasswordMissing))?;
     request.password = Some(password.clone());
 
-    // Route the RDP plane through the in-app loopback tunnel (system ssh).
+    // Route the RDP plane through the in-app loopback tunnel (system ssh),
+    // keyed by the stable device identity.
+    let certificate_name = request.host.clone();
     let manager = tunnels.inner().clone();
     let app2 = app.clone();
     let host = request.host.clone();
     let username = request.username.clone();
+    let device_key = device_key(&request.host, request.device_id.as_deref(), &request.username);
     let endpoints = tokio::task::spawn_blocking(move || {
         manager.ensure(
             &app2,
             &host,
             crate::ssh::types::DEFAULT_PORT,
+            &device_key,
             &username,
             &password,
         )
@@ -96,7 +115,8 @@ pub async fn launch_remote_desktop(
     request.host = endpoints.host;
     request.port = endpoints.rdp_port;
 
-    let config = RdpConnectionConfig::from(request);
+    let mut config = RdpConnectionConfig::from(request);
+    config.certificate_name = certificate_name;
     eprintln!(
         "[jr-flow] rdp launch start host={} port={}",
         config.host, config.port
@@ -159,7 +179,7 @@ async fn prepare_request(
     secrets: &FileSecretStore,
     tunnels: &TunnelManager,
     request: &mut RdpConnectionRequest,
-) -> Result<(), RdpIpcError> {
+) -> Result<TunnelEndpoints, RdpIpcError> {
     // A typed password wins; None (or empty) falls back to the remembered
     // one. Missing → typed error; the frontend asks the user for a password.
     // The fallback resolves the secret-store account from remembered.json so
@@ -169,6 +189,7 @@ async fn prepare_request(
     let password = remember::resolve_password(
         &remembered_store,
         secrets,
+        request.device_id.as_deref(),
         &request.host,
         &request.username,
         request.password.as_deref(),
@@ -176,16 +197,21 @@ async fn prepare_request(
     .map_err(|_| map_rdp_error(RdpError::PasswordMissing))?;
     request.password = Some(password.clone());
 
-    // Route the RDP plane through the in-app loopback tunnel (system ssh).
+    // Route the RDP plane through the in-app loopback tunnel (system ssh),
+    // keyed by the stable device identity so both addresses of one Jetson
+    // share a tunnel while two Jetsons never do.
+    let certificate_name = request.host.clone();
     let manager = tunnels.clone();
     let app2 = app.clone();
     let host = request.host.clone();
     let username = request.username.clone();
+    let device_key = device_key(&request.host, request.device_id.as_deref(), &request.username);
     let endpoints = tokio::task::spawn_blocking(move || {
         manager.ensure(
             &app2,
             &host,
             crate::ssh::types::DEFAULT_PORT,
+            &device_key,
             &username,
             &password,
         )
@@ -193,9 +219,94 @@ async fn prepare_request(
     .await
     .map_err(|_| map_rdp_error(RdpError::Unknown))?
     .map_err(map_tunnel_rdp_error)?;
-    request.host = endpoints.host;
+    request.host = endpoints.host.clone();
     request.port = endpoints.rdp_port;
-    Ok(())
+    // `host`/`port` above are the local SSH-forward endpoint. Certificate
+    // pinning must stay scoped to the real Jetson rather than all tunnels
+    // sharing 127.0.0.1.
+    request.certificate_name = Some(certificate_name);
+    Ok(endpoints)
+}
+
+const FIRST_DESKTOP_TIMEOUT: Duration = Duration::from_secs(18);
+const REPAIRED_DESKTOP_TIMEOUT: Duration = Duration::from_secs(25);
+
+async fn wait_for_usable_desktop(
+    sessions: &RdpSessionManager,
+    session_id: &str,
+    timeout: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if sessions.has_usable_frame_keyed(session_id) {
+            return true;
+        }
+        if !sessions.is_running_keyed(session_id) || tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Recover the specific XRDP failure where the transport is alive but sesman
+/// never produces a desktop. This is intentionally narrower than bootstrap:
+/// packages/configuration already passed verification, so only the two
+/// coupled services are restarted. The real password travels over SSH stdin.
+async fn restart_remote_desktop_services(
+    app: &AppHandle,
+    endpoints: &TunnelEndpoints,
+    identity_host: &str,
+    identity_port: u16,
+    username: &str,
+    password: &str,
+) -> Result<(), RdpIpcError> {
+    let wire = SshConnectionInput {
+        host: endpoints.host.clone(),
+        port: endpoints.ssh_port,
+        username: username.to_owned(),
+        device_id: None,
+        password: None,
+    };
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    let trust = TrustStoreFile::load(config_dir).map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    let expected = trust
+        .get_fingerprint(identity_host, identity_port)
+        .ok_or_else(|| map_rdp_error(RdpError::Unknown))?;
+    let mut session = match ssh::connect_with_identity(
+        &wire,
+        identity_host,
+        identity_port,
+        Some(&expected),
+        &SshConfig::default(),
+    )
+    .await
+    .map_err(|_| map_rdp_error(RdpError::Unknown))?
+    {
+        ssh::SshConnectOutcome::Connected(session) => session,
+        _ => return Err(map_rdp_error(RdpError::Unknown)),
+    };
+    session
+        .authenticate_password(username, password)
+        .await
+        .map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    let input = format!("{password}\n");
+    let result = session
+        .exec_with_stdin(
+            "sudo -S -p '' systemctl restart xrdp-sesman xrdp",
+            input.as_bytes(),
+        )
+        .await
+        .map_err(|_| map_rdp_error(RdpError::Unknown))?;
+    match result.exit_code {
+        Some(0) | None => {
+            eprintln!("[jr-flow] XRDP services restarted after no-desktop timeout");
+            Ok(())
+        }
+        Some(_) => Err(map_rdp_error(RdpError::Unknown)),
+    }
 }
 
 /// Launch (or re-focus) ONE device's desktop session inside the multi-session
@@ -209,6 +320,7 @@ pub async fn launch_session(
     tunnels: State<'_, TunnelManager>,
     embedded: State<'_, RdpSessionManager>,
     session_id: String,
+    focus_on_launch: Option<bool>,
     mut request: RdpConnectionRequest,
 ) -> Result<RdpLaunchResult, RdpIpcError> {
     if matches!(engine(), Engine::Sidecar) {
@@ -218,27 +330,112 @@ pub async fn launch_session(
     if session_id.is_empty() {
         return Err(map_rdp_error(RdpError::Unknown));
     }
-    if embedded.is_running_keyed(&session_id) {
-        // Already connected: just bring it to the screen.
-        let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
-        embedded
-            .focus(&session_id, ns_window, SESSION_TAB_BAR_INSET)
-            .map_err(map_rdp_error)?;
+    let launch_mode = if focus_on_launch.unwrap_or(true) {
+        SessionLaunchMode::Focused
+    } else {
+        SessionLaunchMode::Background
+    };
+    if embedded.is_running_keyed(&session_id) && embedded.has_usable_frame_keyed(&session_id) {
+        if launch_mode == SessionLaunchMode::Focused {
+            let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
+            embedded
+                .focus(&session_id, ns_window, SESSION_TAB_BAR_INSET)
+                .map_err(map_rdp_error)?;
+        }
         return Ok(RdpLaunchResult::AlreadyRunning);
     }
 
-    prepare_request(&app, &secrets, &tunnels, &mut request).await?;
+    let device_id = request.device_id.clone();
+    let endpoints = prepare_request(&app, &secrets, &tunnels, &mut request).await?;
 
     let config = RdpConnectionConfig::from(request);
     eprintln!(
         "[jr-flow] rdp session launch id={} host={} port={}",
         session_id, config.host, config.port
     );
-    let ns_window = window_ns_window(&app).map_err(map_rdp_error)?;
+    // Raw AppKit pointers are not `Send`; keep only the address across the
+    // async readiness/repair waits and reconstruct the non-owning pointer for
+    // each synchronous manager call.
+    let ns_window_addr = window_ns_window(&app).map_err(map_rdp_error)? as usize;
+    // A prior transport can still be alive while showing XRDP's permanent
+    // white pre-session buffer. Replace it instead of returning
+    // AlreadyRunning and perpetuating the false-positive connection state.
+    if embedded.is_running_keyed(&session_id) {
+        embedded
+            .close_keyed(&session_id)
+            .await
+            .map_err(map_rdp_error)?;
+    }
     embedded
-        .launch_keyed(&session_id, &config, ns_window, SESSION_TAB_BAR_INSET)
+        .launch_keyed(
+            &session_id,
+            &config,
+            ns_window_addr as *mut c_void,
+            SESSION_TAB_BAR_INSET,
+            SessionLaunchMode::Background,
+        )
         .map_err(map_rdp_error)?;
-    Ok(RdpLaunchResult::Opened)
+    if wait_for_usable_desktop(&embedded, &session_id, FIRST_DESKTOP_TIMEOUT).await {
+        if launch_mode == SessionLaunchMode::Focused {
+            embedded
+                .focus(
+                    &session_id,
+                    ns_window_addr as *mut c_void,
+                    SESSION_TAB_BAR_INSET,
+                )
+                .map_err(map_rdp_error)?;
+        }
+        return Ok(RdpLaunchResult::Opened);
+    }
+
+    eprintln!("[jr-flow] no usable desktop frame; repairing XRDP services");
+    embedded
+        .close_keyed(&session_id)
+        .await
+        .map_err(map_rdp_error)?;
+    let repair_identity = device_id
+        .as_deref()
+        .filter(|i| !i.is_empty())
+        .unwrap_or(&config.certificate_name)
+        .to_string();
+    restart_remote_desktop_services(
+        &app,
+        &endpoints,
+        &repair_identity,
+        crate::ssh::types::DEFAULT_PORT,
+        &config.username,
+        &config.password,
+    )
+    .await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    embedded
+        .launch_keyed(
+            &session_id,
+            &config,
+            ns_window_addr as *mut c_void,
+            SESSION_TAB_BAR_INSET,
+            SessionLaunchMode::Background,
+        )
+        .map_err(map_rdp_error)?;
+    if wait_for_usable_desktop(&embedded, &session_id, REPAIRED_DESKTOP_TIMEOUT).await {
+        if launch_mode == SessionLaunchMode::Focused {
+            embedded
+                .focus(
+                    &session_id,
+                    ns_window_addr as *mut c_void,
+                    SESSION_TAB_BAR_INSET,
+                )
+                .map_err(map_rdp_error)?;
+        }
+        return Ok(RdpLaunchResult::Opened);
+    }
+
+    embedded
+        .close_keyed(&session_id)
+        .await
+        .map_err(map_rdp_error)?;
+    Err(map_rdp_error(RdpError::NoUsableFrame))
 }
 
 /// Quick-switch the on-screen desktop without reconnecting (V0.4 tab bar).

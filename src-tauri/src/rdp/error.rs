@@ -13,6 +13,8 @@ pub enum RdpError {
     LaunchFailed(#[from] std::io::Error),
     #[error("no stored password is available for this device")]
     PasswordMissing,
+    #[error("rdp connected without a usable desktop frame")]
+    NoUsableFrame,
     #[error("rdp error")]
     Unknown,
 }
@@ -31,7 +33,6 @@ pub enum RdpErrorCode {
     RdpAuthenticationFailed,
     #[allow(dead_code)]
     RdpCertificateChanged,
-    #[allow(dead_code)]
     RdpConnectionFailed,
     #[allow(dead_code)]
     RdpProcessCrashed,
@@ -66,6 +67,10 @@ pub fn map_rdp_error(e: RdpError) -> RdpIpcError {
         RdpError::PasswordMissing => (
             RdpErrorCode::RdpPasswordMissing,
             "No stored password is available for this device",
+        ),
+        RdpError::NoUsableFrame => (
+            RdpErrorCode::RdpConnectionFailed,
+            "The Jetson connected but did not produce a usable desktop.",
         ),
         RdpError::Unknown => (
             RdpErrorCode::RdpUnknown,

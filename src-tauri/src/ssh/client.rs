@@ -32,13 +32,27 @@ pub async fn connect(
     expected_fingerprint: Option<&str>,
     config: &SshConfig,
 ) -> Result<SshConnectOutcome, SshError> {
+    connect_with_identity(input, &input.host, input.port, expected_fingerprint, config).await
+}
+
+/// Connect to a transport endpoint while binding TOFU metadata to a stable
+/// remote identity. The app normally dials a loopback SSH forward whose port
+/// can be reused by a different Jetson on the next run; trusting that wire
+/// address would cross-contaminate devices.
+pub async fn connect_with_identity(
+    input: &SshConnectionInput,
+    identity_host: &str,
+    identity_port: u16,
+    expected_fingerprint: Option<&str>,
+    config: &SshConfig,
+) -> Result<SshConnectOutcome, SshError> {
     let trust = Arc::new(Mutex::new(TrustState {
         expected_fingerprint: expected_fingerprint.map(str::to_string),
         captured: None,
     }));
     let handler = ClientHandler {
-        host: input.host.clone(),
-        port: input.port,
+        host: identity_host.to_owned(),
+        port: identity_port,
         trust: trust.clone(),
     };
 

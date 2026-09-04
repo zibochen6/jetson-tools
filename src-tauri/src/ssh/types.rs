@@ -6,11 +6,17 @@ pub const DEFAULT_PORT: u16 = 22;
 pub const MAX_OUTPUT_BYTES: usize = 1 << 20; // 1 MiB
 
 #[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SshConnectionInput {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
     pub username: String,
+    /// Stable device identity (`/etc/machine-id`) when the frontend knows it
+    /// (remembered v3 device). Drives password resolution and the trust/tunnel
+    /// keys; `None` falls back to host-based identity (legacy).
+    #[serde(default)]
+    pub device_id: Option<String>,
     /// `None` = use the remembered password from the OS secret store
     /// (resolved by `remember::resolve_password` at the command boundary).
     pub password: Option<String>,
@@ -22,15 +28,16 @@ pub fn default_port() -> u16 {
 
 // Secret-safe Debug: never prints the password.
 impl fmt::Debug for SshConnectionInput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SshConnectionInput")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("username", &self.username)
-            .field("password", &"<redacted>")
-            .finish()
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SshConnectionInput")
+                .field("host", &self.host)
+                .field("port", &self.port)
+                .field("device_id", &self.device_id)
+                .field("username", &self.username)
+                .field("password", &"<redacted>")
+                .finish()
+        }
     }
-}
 
 #[derive(Clone, Debug)]
 pub struct SshConfig {
@@ -98,6 +105,7 @@ mod tests {
             host: "192.168.100.164".into(),
             port: 22,
             username: "seeed".into(),
+            device_id: Some("5dbfb124".into()),
             password: Some("s3cret".into()),
         };
         let debug = format!("{input:?}");
@@ -108,6 +116,7 @@ mod tests {
             host: "h".into(),
             port: 22,
             username: "u".into(),
+            device_id: None,
             password: None,
         };
         // Redacted even when absent — the debug shape stays constant.

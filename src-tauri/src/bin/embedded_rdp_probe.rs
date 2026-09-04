@@ -6,7 +6,7 @@
 //!   2. direct sampling of `gdi->primary_buffer` — catches content delivered via
 //!      the RDPGFX graphics pipeline even when `update->EndPaint` never fires.
 //!
-//! Usage: `printf 'PASSWORD\n' | cargo run --bin embedded_rdp_probe -- <host> [user]`
+//! Usage: `printf 'PASSWORD\n' | cargo run --bin embedded_rdp_probe -- <host> [user] [port] [certificate-name]`
 
 use std::ffi::{c_int, c_void, CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -126,6 +126,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let host = args.get(1).map(String::as_str).unwrap_or("192.168.100.164");
     let username = args.get(2).map(String::as_str).unwrap_or("seeed");
+    let port = args
+        .get(3)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(3389);
+    let certificate_name = args.get(4).map(String::as_str).unwrap_or(host);
 
     let mut password = String::new();
     if std::io::stdin().read_line(&mut password).is_err() {
@@ -138,12 +143,14 @@ fn main() {
     println!("[probe] FreeRDP bridge version: {version}");
 
     let host_c = CString::new(host).unwrap();
+    let certificate_name_c = CString::new(certificate_name).unwrap();
     let user_c = CString::new(username).unwrap();
     let pass_c = CString::new(password).unwrap();
 
     let params = jr_connect_params {
+        certificate_name: certificate_name_c.as_ptr(),
         host: host_c.as_ptr(),
-        port: 3389,
+        port,
         username: user_c.as_ptr(),
         password: pass_c.as_ptr(),
         width: 1280,

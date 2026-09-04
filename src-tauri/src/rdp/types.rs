@@ -8,10 +8,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RdpConnectionRequest {
+    /// Backend-only identity for certificate TOFU. This field is never
+    /// deserialized from IPC; tunnel setup supplies the original Jetson host.
+    #[serde(skip)]
+    pub certificate_name: Option<String>,
     pub host: String,
     #[serde(default = "default_rdp_port")]
     pub port: u16,
     pub username: String,
+    /// Stable device identity (`/etc/machine-id`) when the frontend knows it —
+    /// drives password resolution and the tunnel device key.
+    #[serde(default)]
+    pub device_id: Option<String>,
     /// `None` = use the remembered password from the OS secret store
     /// (resolved by `remember::resolve_password` at the command boundary).
     pub password: Option<String>,
@@ -37,6 +45,10 @@ impl fmt::Debug for RdpConnectionRequest {
 /// the client — Phase 5 will point these at a local SSH-forwarded port.
 #[derive(Clone)]
 pub struct RdpConnectionConfig {
+    /// Identity used for certificate pinning.  The transport endpoint may be a
+    /// per-session SSH loopback port, but its certificate belongs to the
+    /// original Jetson, not to 127.0.0.1.
+    pub certificate_name: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -51,6 +63,7 @@ impl From<RdpConnectionRequest> for RdpConnectionConfig {
     /// than leaking or crashing.
     fn from(r: RdpConnectionRequest) -> Self {
         Self {
+            certificate_name: r.certificate_name.unwrap_or_else(|| r.host.clone()),
             host: r.host,
             port: r.port,
             username: r.username,
@@ -64,6 +77,7 @@ impl From<RdpConnectionRequest> for RdpConnectionConfig {
 impl fmt::Debug for RdpConnectionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RdpConnectionConfig")
+            .field("certificate_name", &self.certificate_name)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("username", &self.username)
@@ -103,9 +117,11 @@ mod tests {
     #[test]
     fn request_debug_redacts_password() {
         let req = RdpConnectionRequest {
+            certificate_name: None,
             host: "192.168.100.164".into(),
             port: 3389,
             username: "seeed".into(),
+            device_id: Some("5dbfb124".into()),
             password: Some("s3cret".into()),
         };
         let dbg = format!("{req:?}");
@@ -116,6 +132,7 @@ mod tests {
     #[test]
     fn config_debug_redacts_password() {
         let config = RdpConnectionConfig {
+            certificate_name: "h".into(),
             host: "h".into(),
             port: 3389,
             username: "u".into(),

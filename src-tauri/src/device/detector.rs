@@ -113,6 +113,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parses_machine_id_serial_and_paths() {
+        let mut ex = MockExec {
+            stdout: br#"{"is_jetson":true,"hostname":"seeed-desktop","architecture":"aarch64","ubuntu_version":"22.04","l4t_version":"R36.4","jetpack_version":"6.2.1","device_model":"reComputer","machine_id":"5dbfb124","serial_number":"1421123007848","ipv4_addresses":[{"address":"192.168.2.18","kind":"lan"},{"address":"100.114.170.49","kind":"tailscale"}]}"#.to_vec(),
+            exit_code: Some(0),
+        };
+        match detect(&mut ex).await.unwrap() {
+            DetectOutcome::Device(d) => {
+                assert_eq!(d.machine_id, "5dbfb124");
+                assert_eq!(d.serial_number, "1421123007848");
+                assert_eq!(d.ipv4_addresses.len(), 2);
+                assert_eq!(d.ipv4_addresses[0].address, "192.168.2.18");
+                assert_eq!(d.ipv4_addresses[0].kind, "lan");
+                assert_eq!(d.ipv4_addresses[1].kind, "tailscale");
+            }
+            DetectOutcome::NotJetson => panic!("expected device"),
+        }
+
+        // Older script output without the new fields defaults gracefully.
+        let mut ex = MockExec {
+            stdout: FIXTURE.as_bytes().to_vec(),
+            exit_code: Some(0),
+        };
+        match detect(&mut ex).await.unwrap() {
+            DetectOutcome::Device(d) => {
+                assert!(d.machine_id.is_empty());
+                assert!(d.serial_number.is_empty());
+                assert!(d.ipv4_addresses.is_empty());
+            }
+            DetectOutcome::NotJetson => panic!("expected device"),
+        }
+    }
+
+    #[tokio::test]
+    async fn device_id_prefers_serial_over_machine_id() {
+        use crate::device::types::JetsonDevice;
+
+        // Cloned vendor images share one machine-id across boards (real
+        // finding on the two test J501s); the device-tree serial is unique
+        // per module and must win.
+        let d: JetsonDetectionResult = serde_json::from_str(
+            r#"{"is_jetson":true,"hostname":"seeed-desktop","architecture":"aarch64","ubuntu_version":"22.04","l4t_version":"R36.4","jetpack_version":"6.2.1","device_model":"reComputer","machine_id":"5dbfb124","serial_number":"1421123007848","ipv4_addresses":[]}"#,
+        )
+        .unwrap();
+        let device = JetsonDevice::from_detection("192.168.2.18", d);
+        assert_eq!(device.device_id.as_deref(), Some("1421123007848"));
+
+        // No serial → machine-id is the identity.
+        let d: JetsonDetectionResult = serde_json::from_str(
+            r#"{"is_jetson":true,"hostname":"h","architecture":"aarch64","ubuntu_version":"22.04","l4t_version":"R36.4","jetpack_version":"6.2.1","device_model":"m","machine_id":"5dbfb124","serial_number":"","ipv4_addresses":[]}"#,
+        )
+        .unwrap();
+        let device = JetsonDevice::from_detection("192.168.2.18", d);
+        assert_eq!(device.device_id.as_deref(), Some("5dbfb124"));
+
+        // Neither → legacy host-keyed identity (no deviceId).
+        let d: JetsonDetectionResult = serde_json::from_str(
+            r#"{"is_jetson":true,"hostname":"h","architecture":"aarch64","ubuntu_version":"22.04","l4t_version":"R36.4","jetpack_version":"6.2.1","device_model":"m","ipv4_addresses":[]}"#,
+        )
+        .unwrap();
+        let device = JetsonDevice::from_detection("192.168.2.18", d);
+        assert_eq!(device.device_id, None);
+    }
+
+    #[tokio::test]
     async fn maps_not_jetson() {
         let mut ex = MockExec {
             stdout: r#"{"is_jetson":false,"hostname":"pi","architecture":"x86_64","ubuntu_version":"22.04","l4t_version":"","jetpack_version":"","device_model":"raspberry"}"#.as_bytes().to_vec(),

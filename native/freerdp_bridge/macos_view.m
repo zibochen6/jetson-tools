@@ -624,6 +624,13 @@ static void run_on_main(void (^block)(void))
 		dispatch_async(dispatch_get_main_queue(), block);
 }
 
+static CGFloat jr_content_safe_top(NSView* content)
+{
+	if (@available(macOS 11.0, *))
+		return content.safeAreaInsets.top;
+	return 0.0;
+}
+
 void* jr_view_create(void)
 {
 	__block JRView* v = nil;
@@ -681,13 +688,23 @@ void jr_view_add_to_window_inset(void* handle, void* ns_window, double top_inset
 	run_on_main(^{
 	  NSView* content = win.contentView;
 	  CGRect b = content.bounds;
-	  CGFloat inset = top_inset > 0 ? (CGFloat)top_inset : 0;
+	  CGFloat tabInset = top_inset > 0 ? (CGFloat)top_inset : 0;
+	  /* Tauri's transparent/full-size content view extends underneath the
+	   * macOS title bar. The web tab row starts below that safe area, while a
+	   * sibling NSView is positioned in the full content-view coordinates.
+	   * Reserving only the 44pt tab row therefore covered most of the tabs.
+	   * Keep BOTH regions clear. */
+	  CGFloat safeTop = jr_content_safe_top(content);
+	  CGFloat inset = safeTop + tabInset;
 	  /* AppKit origin is bottom-left: pin the view bottom, leave `inset` free
 	   * at the top. Width+height sizable with fixed margins preserves the
 	   * inset across window resizes. */
 	  v.frame = NSMakeRect(0, 0, b.size.width, MAX(b.size.height - inset, 100));
 	  v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	  [content addSubview:v positioned:NSWindowAbove relativeTo:nil];
+	  NSLog(@"[jr-view] mount bounds=%.0fx%.0f safeTop=%.0f tabInset=%.0f frame=%.0fx%.0f",
+	        b.size.width, b.size.height, safeTop, tabInset, v.frame.size.width,
+	        v.frame.size.height);
 	});
 }
 
@@ -736,6 +753,21 @@ void jr_window_content_size(void* ns_window, double* w, double* h)
 		  *w = (double)win.contentView.bounds.size.width;
 		  *h = (double)win.contentView.bounds.size.height;
 		});
+}
+
+double jr_window_safe_area_top(void* ns_window)
+{
+	NSWindow* win = (__bridge NSWindow*)ns_window;
+	if (!win)
+		return 0.0;
+	__block double top = 0.0;
+	if ([NSThread isMainThread])
+		top = (double)jr_content_safe_top(win.contentView);
+	else
+		dispatch_sync(dispatch_get_main_queue(), ^{
+		  top = (double)jr_content_safe_top(win.contentView);
+		});
+	return top;
 }
 
 void jr_view_present_buffer(void* handle, const uint8_t* buffer, int width, int height,

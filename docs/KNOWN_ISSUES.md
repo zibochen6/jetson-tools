@@ -82,15 +82,15 @@
 - **现象**：Phase 4B-2 真机 Native View 已出现但纯黑；headless probe `EndPaint` 钩子**永不触发**（`on_frame`=0），`gdi_init_ex` 却正常打印 `Local/Remote framebuffer`。
 - **根因**：`gdi_init()` 只接线 **legacy GDI** 路径（BitmapUpdate/绘图指令/SurfaceBits），**不注册 RDPGFX 图形管线**（`gdi_StartFrame/EndFrame/SurfaceCommand/CreateSurface/UpdateSurfaces`）。XRDP 默认协商 RDPGFX → 桌面经 GFX 通道下发，未接 `gdi_graphics_pipeline_init(gdi, gfx)` 时**整帧被静默丢弃**，`primary_buffer` 全零 → 纯黑且 `EndPaint` 不触发。参考客户端在 RDPGFX 动态通道 connect 时懒调用该函数（`client/common/client.c:1610`）。
 - **影响**：所有走 RDPGFX 的 XRDP 桌面；`endpaint=0` 是典型信号（「连上了却收不到帧」）。
-- **修复**：`bridge.c` `jr_pre_connect` 里 `PubSub_SubscribeChannelConnected(instance->context->pubSub, freerdp_client_OnChannelConnectedEventHandler)`（默认处理器内部已含 RDPGFX→gdi 接线），post_disconnect 反订阅。见 `EMBEDDED_RDP.md` §7。
-- **状态**：✅ 代码已修复、编译通过；真机（隧道）确认连接后 `primary_buffer` 非黑 + `Local framebuffer PIXEL_FORMAT_BGRX32`。最终视觉确认仍待 Mac 本地网络权限放行后直连 `:10`。
+- **修复**：`bridge.c` `jr_pre_connect` 里 `PubSub_SubscribeChannelConnected(instance->context->pubSub, freerdp_client_OnChannelConnectedEventHandler)`（默认处理器内部已含 RDPGFX→gdi 接线），post_disconnect 反订阅。另因 GFX 更新不保证调用 legacy `EndPaint`，RDP event loop 每 33ms 提交一次已解码的 `primary_buffer`，使 native view 不会停在占位黑色。见 `EMBEDDED_RDP.md` §7。
+- **状态**：✅ 真机（SSH 隧道）视觉确认：XFCE 桌面与终端内容均可见（2026-09-02）。
 
-## KI-014 — xrdp TLS 私钥权限：`xrdp` 用户在 `ssl-cert` 组外（已修复）
+## KI-014 — xrdp TLS 私钥权限：`xrdp` 用户在 `ssl-cert` 组外（自动修复）
 - **现象**：某时刻起所有 RDP 连接在 X.224/CR-TPDU 阶段被掐断；设备日志 `Cannot read private key file /etc/xrdp/key.pem: Permission denied`。
 - **根因**：`key.pem` 是 `→ /etc/ssl/private/ssl-cert-snakeoil.key` 符号链接；`/etc/ssl/private/` 为 `0710 root:ssl-cert`，而 `xrdp` 进程以 `xrdp` 用户(uid 114)运行，**不在空的 `ssl-cert` 组** → 读不到 TLS 私钥。
 - **影响**：阻塞全部新连接（与客户端无关）。
-- **修复**：`sudo adduser xrdp ssl-cert && sudo systemctl restart xrdp`。已真机执行并复验（xrdp.log 变为 `Using default X.509 key file`）。
-- **状态**：✅ 已修复。
+- **修复**：`check-environment.sh` 读取 `id -nG xrdp` 并把缺失组成员关系分类为 broken；现有 prepare 流程随即运行 `bootstrap.sh`，后者确保 `ssl-cert` 已安装、幂等执行 `adduser xrdp ssl-cert`，并仅在成员关系改变时重启 xrdp。已真机执行并复验（xrdp.log 变为 `Using default X.509 key file`）。
+- **状态**：✅ 自动检测与自愈（2026-09-02）。
 
 ## KI-015 — xrdp 新建会话窗口管理器段错误（exit 139，根因未定）
 - **现象**：新建 Xorg 会话（例如 `:11`）窗口管理器 2 秒内 `exit 139`（SIGSEGV）；sesman `Window manager exited with exit code 139`。老会话（`:10`）不受影响。
@@ -184,3 +184,27 @@
   - 设计取舍：焦点恢复时**不**反向补发「仍按住」的修饰键——AppKit 修饰键 flag 无 L/R 区分，补发可能制造新卡键；下次真实 flagsChanged 自然重同步。
 - **诊断口径（地面真值）**：`DISPLAY=:10.0 xinput query-state <键盘设备id>`（先 `xinput list` 找 id），空闲时 `down:` 列表含 Super_L(keycode 133) 即卡键确诊。
 - **状态**：✅ 已修复（2026-09-02；真机回归见 CONNECTION_REGRESSION_GUIDE §3.1/§3.4）。
+
+## KI-024 — 后台设备重连抢占前台桌面与隧道凭据目录共享（已修复，0.3.2）
+
+- **症状**：同时连接多台 Jetson 时，后台设备断线后的自动重连会把用户正在操作的前台桌面切走；多条 SSH 隧道还共用同一份临时 askpass/password 目录，任一隧道销毁都会清理公共目录。
+- **根因**：`launch_session` 只有“启动并聚焦”一种语义，前端自动重试成功后也无条件更新 `activeId`；隧道管理器虽按设备保存多个子进程，但临时凭据路径仍是单设备时代的固定路径。
+- **修复**：IPC 增加兼容的 `focusOnLaunch` 选项，后台恢复以隐藏模式创建 Native View、RDP 会话和隧道，仅在该 Tab 仍被选中时重新聚焦；每条隧道改用独立 0700 目录和 0600 密码文件，启动时清理遗留目录，外部开发隧道拒绝绑定第二个设备身份。
+- **进程清理**：系统 SSH 进入独立进程组，超时、退出和 app 关闭时终止整组并有界回收，避免 askpass 子进程持有 stderr 导致清理阻塞。
+- **状态**：✅ 自动化回归已覆盖；双真机验证是 0.3.2 发布门槛。
+
+## KI-025 — 多设备 Tab 被原生画布遮挡、第二台“已连接”但白屏（已修复，0.3.2）
+
+- **症状**：连接多台设备后，顶部 Tab 只露出一小条、无法正常切换；第二台状态显示已连接，但桌面区域持续纯白。
+- **根因（两项独立问题）**：
+  1. Tauri 的 macOS content view 延伸到标题栏下方，原生 NSView 只预留了 44pt Tab 高度，未加 `safeAreaInsets.top`，所以覆盖了大部分 Web Tab。
+  2. XRDP 的 TLS/RDP 握手先于 sesman 桌面建立完成；第二台的 `xrdp-sesman` 当时处于“进程 active、3350 listening、但不处理 xrdp 请求”的假健康状态。FreeRDP 得到永久纯白缓冲，旧逻辑仍立即返回 `Opened`。
+- **修复**：原生画布与 RDP 分辨率统一扣除 macOS 顶部安全区 + 44pt Tab；会话启动改为后台等待真实非纯色首帧后再聚焦。首轮 18 秒仍无桌面时，通过既有 SSH 隧道联动重启 `xrdp-sesman`/`xrdp` 并重试一次；第二次仍失败则返回明确连接错误，不再显示假成功。远端检查和 bootstrap 同时验证两个服务及 3389/3350。
+- **状态**：✅ 自动化回归已覆盖；双真机视觉/切换验证是 0.3.2 发布门槛。
+
+## KI-026 — 克隆镜像的 `/etc/machine-id` 跨板重复（identity-v3 已规避）
+
+- **症状**：两台测试 J501（robotics 32G / mini 64G）的 `/etc/machine-id` 完全相同（`5dbfb124…`），hostname 也同为 `seeed-desktop` —— 出厂镜像克隆所致。若以 machine-id 作设备身份，两块板会被并成同一台设备（无法双开、TOFU 反复弹「身份变更」）。
+- **规避（identity-v3）**：`deviceId` 优先取 `/proc/device-tree/serial-number`（Jetson 模组出厂序列号，每板唯一、重装系统不变；真机验证 mini=`1421123007848`），无序列号才回退 machine-id，两者皆无回退 host 身份（legacy）。见 ADR-031。
+- **附带**：detect.sh 的路径采集同时按接口名过滤虚拟网桥（`l4tbr0`/`docker*`/`br-*` 等）——真机上 Seeed 的 L4T USB 桥用 192.168.56.0/24（不是 55），仅靠网段过滤会漏。
+- **状态**：✅ 已在 identity-v3 实现中规避；robotics 板的序列号唯一性待其网络恢复后复核（模组序列号为出厂烧录，风险极低）。

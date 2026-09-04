@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-import { TauriConnectionService } from "./tauriService";
+import { TauriConnectionService, TauriSessionService } from "./tauriService";
 import { ConnectionInput } from "./types";
 
 const input: ConnectionInput = {
@@ -86,7 +86,7 @@ describe("TauriConnectionService", () => {
     invokeMock.mockResolvedValue({ kind: "device", device: { host: "h" } });
     await new TauriConnectionService().connect(input, {});
     expect(invokeMock).toHaveBeenCalledWith("probe_device", {
-      input: { host: "192.168.100.164", port: 22, username: "seeed", password: "pw" },
+      input: { host: "192.168.100.164", port: 22, username: "seeed", deviceId: null, password: "pw" },
       hostKeyDecision: null,
     });
   });
@@ -98,7 +98,7 @@ describe("TauriConnectionService", () => {
       {},
     );
     expect(invokeMock).toHaveBeenCalledWith("probe_device", {
-      input: { host: "192.168.100.164", port: 22, username: "seeed", password: null },
+      input: { host: "192.168.100.164", port: 22, username: "seeed", deviceId: null, password: null },
       hostKeyDecision: null,
     });
   });
@@ -142,7 +142,7 @@ describe("TauriConnectionService", () => {
       invokeMock.mockResolvedValue({ kind: "device", device: {} });
       await new Svc().connect(input, {});
       expect(invokeMock).toHaveBeenLastCalledWith("probe_device", {
-        input: { host: "192.168.100.164", port: 22, username: "seeed", password: "pw" },
+        input: { host: "192.168.100.164", port: 22, username: "seeed", deviceId: null, password: "pw" },
         hostKeyDecision: null,
       });
       invokeMock.mockResolvedValue({ kind: "opened" });
@@ -155,6 +155,7 @@ describe("TauriConnectionService", () => {
         request: {
           host: "192.168.100.164",
           username: "seeed",
+          deviceId: null,
           password: "pw",
         },
       });
@@ -176,6 +177,52 @@ describe("TauriConnectionService", () => {
       request: {
         host: "192.168.100.164",
         username: "seeed",
+        deviceId: null,
+        password: "pw",
+      },
+    });
+  });
+
+  it("keyed launch defaults to taking focus", async () => {
+    invokeMock.mockResolvedValue({ kind: "opened" });
+    await new TauriConnectionService().launch(
+      {
+        host: "192.168.100.164",
+        username: "seeed",
+        password: "pw",
+      },
+      { sessionId: "seeed@192.168.100.164" },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("launch_session", {
+      sessionId: "seeed@192.168.100.164",
+      focusOnLaunch: true,
+      request: {
+        host: "192.168.100.164",
+        username: "seeed",
+        deviceId: null,
+        password: "pw",
+      },
+    });
+  });
+
+  it("session recovery can launch without taking focus", async () => {
+    invokeMock.mockResolvedValue({ kind: "opened" });
+    await new TauriSessionService().launch(
+      "seeed@192.168.100.164",
+      {
+        host: "192.168.100.164",
+        username: "seeed",
+        password: "pw",
+      },
+      { focusOnLaunch: false },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("launch_session", {
+      sessionId: "seeed@192.168.100.164",
+      focusOnLaunch: false,
+      request: {
+        host: "192.168.100.164",
+        username: "seeed",
+        deviceId: null,
         password: "pw",
       },
     });
@@ -192,6 +239,7 @@ describe("TauriConnectionService", () => {
       request: {
         host: "192.168.100.164",
         username: "seeed",
+        deviceId: null,
         password: null,
       },
     });
@@ -238,5 +286,88 @@ describe("TauriConnectionService", () => {
     const status = await new TauriConnectionService().status();
     expect(status).toEqual({ kind: "running" });
     expect(invokeMock).toHaveBeenCalledWith("rdp_status");
+  });
+});
+
+describe("identity-v3 wire shape", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("connect forwards the deviceId of a remembered v3 device", async () => {
+    invokeMock.mockResolvedValue({ kind: "device", device: { host: "h" } });
+    await new TauriConnectionService().connect(
+      { ...input, deviceId: "5dbfb124" },
+      {},
+    );
+    expect(invokeMock).toHaveBeenCalledWith("probe_device", {
+      input: {
+        host: "192.168.100.164",
+        port: 22,
+        username: "seeed",
+        deviceId: "5dbfb124",
+        password: "pw",
+      },
+      hostKeyDecision: null,
+    });
+  });
+
+  it("launch forwards the deviceId (tunnel/session key)", async () => {
+    invokeMock.mockResolvedValue({ kind: "opened" });
+    await new TauriConnectionService().launch(
+      {
+        host: "192.168.2.18",
+        username: "seeed",
+        password: "pw",
+        deviceId: "5dbfb124",
+      },
+      { sessionId: "seeed@5dbfb124" },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("launch_session", {
+      sessionId: "seeed@5dbfb124",
+      focusOnLaunch: true,
+      request: {
+        host: "192.168.2.18",
+        username: "seeed",
+        deviceId: "5dbfb124",
+        password: "pw",
+      },
+    });
+  });
+});
+
+describe("probeDevicePaths", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("probes every unique address once", async () => {
+    invokeMock.mockResolvedValue([
+      { address: "192.168.2.18", reachable: true, rttMs: 3 },
+    ]);
+    const out = await (await import("./tauriService")).probeDevicePaths([
+      "192.168.2.18",
+      "192.168.2.18",
+      " 100.114.170.49 ",
+      "",
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("probe_device_paths", {
+      addresses: ["192.168.2.18", " 100.114.170.49 "],
+    });
+    expect(out).toHaveLength(1);
+  });
+
+  it("degrades to an empty list outside Tauri (caller keeps input order)", async () => {
+    invokeMock.mockRejectedValue(new Error("not in Tauri"));
+    const out = await (await import("./tauriService")).probeDevicePaths([
+      "192.168.2.18",
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("skips the IPC round-trip for an empty candidate list", async () => {
+    const out = await (await import("./tauriService")).probeDevicePaths([]);
+    expect(out).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

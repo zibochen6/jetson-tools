@@ -1,12 +1,23 @@
 import { JetsonDevice } from "../types";
 import { Button } from "../../../components/Button";
 import { DeviceCard } from "../../../components/DeviceCard";
-import { useConnectionStore } from "../../../stores/connectionStore";
+import {
+  findSavedByDeviceId,
+  useConnectionStore,
+} from "../../../stores/connectionStore";
 
 export function ReadyScreen({ device }: { device: JetsonDevice | null }) {
   const launchDesktop = useConnectionStore((s) => s.launchDesktop);
   const disconnect = useConnectionStore((s) => s.disconnect);
   const environment = useConnectionStore((s) => s.environment);
+  const displayName = useConnectionStore(
+    (s) =>
+      findSavedByDeviceId(
+        s.savedDevices,
+        device?.deviceId ?? null,
+        s.form.username,
+      )?.displayName ?? null,
+  );
 
   return (
     <div className="mx-auto flex h-full max-w-sm flex-col items-center justify-center text-center">
@@ -16,7 +27,7 @@ export function ReadyScreen({ device }: { device: JetsonDevice | null }) {
       </h2>
       {device && (
         <div className="mt-4 w-full text-left">
-          <DeviceCard device={device} />
+          <DeviceCard device={device} displayName={displayName} />
         </div>
       )}
       {environment && (

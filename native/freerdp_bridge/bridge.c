@@ -59,6 +59,7 @@ struct jr_session
 	jr_cert_callbacks_t cert;
 
 	char* host;
+	char* certificate_name;
 	uint16_t port;
 	char* username;
 	char* password;
@@ -343,13 +344,25 @@ static BOOL jr_begin_paint(rdpContext* context)
 	return TRUE;
 }
 
+static void jr_emit_frame(jr_session_t* s, rdpGdi* gdi);
+
 static BOOL jr_end_paint(rdpContext* context)
 {
 	jr_session_t* s = ((jr_context_t*)context)->session;
 	rdpGdi* gdi = context->gdi;
 
+	jr_emit_frame(s, gdi);
+	return TRUE;
+}
+
+/* RDPGFX writes directly into gdi->primary_buffer and does not reliably call
+ * Update.EndPaint. Keep one presentation path for legacy GDI and the GFX
+ * pipeline; the event loop also invokes this at a modest cadence so a GFX-only
+ * desktop cannot remain on the native view's placeholder colour. */
+static void jr_emit_frame(jr_session_t* s, rdpGdi* gdi)
+{
 	if (!s || !gdi || !gdi->primary)
-		return TRUE;
+		return;
 
 	s->frame_count++;
 	jr_diag_frame(s, gdi); /* DEV-only; no-op unless env-flagged */
@@ -357,7 +370,6 @@ static BOOL jr_end_paint(rdpContext* context)
 	/* Full-frame signal for the SPIKE; dirty-rect refinement is Phase 4B-2/3. */
 	if (s->cb.on_frame_updated)
 		s->cb.on_frame_updated(s->cb.user, 0, 0, gdi->width, gdi->height);
-	return TRUE;
 }
 
 static BOOL jr_desktop_resize(rdpContext* context)
@@ -488,13 +500,14 @@ jr_session_t* jr_session_create(const jr_connect_params_t* params,
 	RDP_CLIENT_ENTRY_POINTS ep;
 	rdpContext* ctx;
 
-	if (!params || !params->host || !params->username || !params->password)
+	if (!params || !params->certificate_name || !params->host || !params->username || !params->password)
 		return NULL;
 
 	s = (jr_session_t*)calloc(1, sizeof(jr_session_t));
 	if (!s)
 		return NULL;
 
+	s->certificate_name = strdup(params->certificate_name);
 	s->host = strdup(params->host);
 	s->username = strdup(params->username);
 	s->password = strdup(params->password);
@@ -507,7 +520,7 @@ jr_session_t* jr_session_create(const jr_connect_params_t* params,
 	if (cert)
 		s->cert = *cert;
 
-	if (!s->host || !s->username || !s->password)
+	if (!s->certificate_name || !s->host || !s->username || !s->password)
 		goto fail;
 
 	ZeroMemory(&ep, sizeof(ep));
@@ -545,6 +558,7 @@ void jr_session_destroy(jr_session_t* s)
 		s->instance = NULL;
 	}
 	free(s->host);
+	free(s->certificate_name);
 	free(s->username);
 	free(s->password);
 	free(s->clip_text);
@@ -579,7 +593,15 @@ static int jr_run_loop(jr_session_t* s)
 			jr_set_error(s, "freerdp_get_event_handles failed");
 			break;
 		}
-		status = WaitForMultipleObjects(nCount, handles, FALSE, INFINITE);
+		/* RDPGFX can update the GDI primary buffer without Update.EndPaint.
+		 * A short event-loop timeout gives the native surface a bounded-latency
+		 * presentation tick for that path without a second reader thread. */
+		status = WaitForMultipleObjects(nCount, handles, FALSE, 33);
+		if (status == WAIT_TIMEOUT)
+		{
+			jr_emit_frame(s, context->gdi);
+			continue;
+		}
 		if (status == WAIT_FAILED)
 		{
 			jr_set_error(s, "WaitForMultipleObjects failed");
@@ -591,6 +613,7 @@ static int jr_run_loop(jr_session_t* s)
 				jr_set_error(s, "failed to check event handles");
 			break;
 		}
+		jr_emit_frame(s, context->gdi);
 	}
 
 	freerdp_disconnect(instance);
@@ -608,6 +631,7 @@ int jr_session_connect(jr_session_t* s)
 	settings = s->context->settings;
 	freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, FALSE);
 	freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, TRUE);
+	freerdp_settings_set_string(settings, FreeRDP_CertificateName, s->certificate_name);
 	freerdp_settings_set_string(settings, FreeRDP_ServerHostname, s->host);
 	freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, s->port);
 	freerdp_settings_set_string(settings, FreeRDP_Username, s->username);

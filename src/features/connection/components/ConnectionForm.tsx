@@ -1,6 +1,6 @@
 import { ReactNode, useMemo, useState } from "react";
 import { Button } from "../../../components/Button";
-import { useConnectionStore } from "../../../stores/connectionStore";
+import { matchSavedDevice, useConnectionStore } from "../../../stores/connectionStore";
 import { validateConnectionForm } from "../validation";
 
 /** Catalog-style input (adapted #14): subtle surface, focus ring in accent. */
@@ -41,7 +41,9 @@ export function ConnectionForm() {
   const form = useConnectionStore((s) => s.form);
   const setForm = useConnectionStore((s) => s.setForm);
   const connect = useConnectionStore((s) => s.connect);
-  const savedDevice = useConnectionStore((s) => s.savedDevice);
+  const savedDevice = useConnectionStore((s) =>
+    matchSavedDevice(s.savedDevices, s.form.host, s.form.username, s.form.deviceId),
+  );
   const [showPassword, setShowPassword] = useState(false);
 
   const errors = useMemo(
@@ -51,11 +53,9 @@ export function ConnectionForm() {
   const valid = Object.keys(errors).length === 0;
 
   // The backend can reuse the stored password: blank field = use Keychain.
-  const usingSavedPassword =
-    savedDevice?.hasPassword === true &&
-    savedDevice.host === form.host.trim() &&
-    savedDevice.username === form.username.trim() &&
-    form.password === "";
+  // matchSavedDevice already verified identity (deviceId or a known path of
+  // this device) and hasPassword, so a match is sufficient here.
+  const usingSavedPassword = savedDevice !== null && form.password === "";
 
   return (
     <form
@@ -70,7 +70,9 @@ export function ConnectionForm() {
           id="host"
           className={inputCls}
           value={form.host}
-          onChange={(e) => setForm({ host: e.target.value })}
+          // Editing the address manually detaches any quick-connect identity:
+          // a stale deviceId would resolve another board's stored password.
+          onChange={(e) => setForm({ host: e.target.value, deviceId: null })}
           placeholder="192.168.1.100 or jetson.local"
           autoFocus
           autoCapitalize="off"
@@ -84,7 +86,7 @@ export function ConnectionForm() {
           id="username"
           className={inputCls}
           value={form.username}
-          onChange={(e) => setForm({ username: e.target.value })}
+          onChange={(e) => setForm({ username: e.target.value, deviceId: null })}
           placeholder="seeed"
           autoCapitalize="off"
           autoCorrect="off"

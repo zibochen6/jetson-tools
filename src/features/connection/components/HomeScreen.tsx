@@ -1,6 +1,11 @@
-import { useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
-import { useSessionsStore, SessionPhase } from "../../../stores/sessionsStore";
+import {
+  sessionPathLabel,
+  useSessionsStore,
+  SessionPhase,
+} from "../../../stores/sessionsStore";
+import { pathLabel } from "../paths";
+import { SavedDeviceInfo } from "../savedDevice";
 import { ConnectionForm } from "./ConnectionForm";
 import { Button } from "../../../components/Button";
 
@@ -11,10 +16,15 @@ import { Button } from "../../../components/Button";
  * first-run experience is unchanged.
  */
 export function HomeScreen() {
-  const savedDevice = useConnectionStore((s) => s.savedDevice);
+  const savedDevices = useConnectionStore((s) => s.savedDevices);
   const forgetDevice = useConnectionStore((s) => s.forgetDevice);
   const setForm = useConnectionStore((s) => s.setForm);
   const connect = useConnectionStore((s) => s.connect);
+  const addingDevice = useConnectionStore((s) => s.addingDevice);
+  const openAddDevice = useConnectionStore((s) => s.openAddDevice);
+  const closeAddDevice = useConnectionStore((s) => s.closeAddDevice);
+  const notice = useConnectionStore((s) => s.notice);
+  const clearNotice = useConnectionStore((s) => s.clearNotice);
 
   const order = useSessionsStore((s) => s.order);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -22,15 +32,19 @@ export function HomeScreen() {
   const closeTab = useSessionsStore((s) => s.closeTab);
 
   const hasSessions = order.length > 0;
-  const [adding, setAdding] = useState(!hasSessions);
 
-  const quickConnect = () => {
-    if (!savedDevice) return;
+  /**
+   * Quick connect a remembered device: the entry address is only a starting
+   * point — the store probes every known path (LAN / Tailscale) and picks the
+   * fastest reachable one (identity-v3).
+   */
+  const quickConnect = (d: SavedDeviceInfo) => {
     setForm({
-      host: savedDevice.host,
-      username: savedDevice.username,
+      host: d.lastUsedPath ?? d.paths[0]?.address ?? "",
+      username: d.username,
       password: "",
       remember: true,
+      deviceId: d.deviceId,
     });
     void connect();
   };
@@ -41,41 +55,75 @@ export function HomeScreen() {
       <div className="mx-auto flex h-full max-w-sm flex-col justify-center">
         <BrandHero />
 
-        {savedDevice && (
-          <div className="jr-enter mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-900/5 dark:border-slate-700/70 dark:bg-slate-800/60 dark:hover:border-slate-600 dark:hover:shadow-black/30">
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${
-                savedDevice.hasPassword
-                  ? "jr-dot-live bg-emerald-500"
-                  : "bg-slate-400 dark:bg-slate-500"
-              }`}
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">
-                {savedDevice.username}@{savedDevice.host}
-              </div>
-              <div className="text-xs text-slate-400 dark:text-slate-500">
-                上次连接
-              </div>
-            </div>
-            {savedDevice.hasPassword && (
-              <button
-                type="button"
-                onClick={quickConnect}
-                className="shrink-0 rounded-lg bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-600 transition-all duration-150 hover:bg-sky-500/20 active:scale-[0.98] dark:text-sky-400"
-              >
-                快速连接
-              </button>
-            )}
+        {notice && (
+          <div className="jr-enter mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+            <span className="truncate text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              {notice}
+            </span>
             <button
               type="button"
-              onClick={() => void forgetDevice()}
-              title="忘记此设备"
-              className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300"
+              onClick={clearNotice}
+              aria-label="关闭提示"
+              className="shrink-0 text-emerald-500 transition-colors duration-150 hover:text-emerald-700 dark:hover:text-emerald-200"
             >
-              忘记
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
             </button>
+          </div>
+        )}
+
+        {savedDevices.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {savedDevices.map((savedDevice) => (
+              <div
+                key={`${savedDevice.username}@${
+                  savedDevice.deviceId ?? savedDevice.paths[0]?.address ?? ""
+                }`}
+                className="jr-enter flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-900/5 dark:border-slate-700/70 dark:bg-slate-800/60 dark:hover:border-slate-600 dark:hover:shadow-black/30"
+              >
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    savedDevice.hasPassword
+                      ? "jr-dot-live bg-emerald-500"
+                      : "bg-slate-400 dark:bg-slate-500"
+                  }`}
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  {/* Identity-v3: the display name is the title; the current
+                      path is only small print. */}
+                  <div className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {savedDevice.displayName ??
+                      `${savedDevice.username}@${
+                        savedDevice.paths[0]?.address ?? "unknown"
+                      }`}
+                  </div>
+                  <div className="truncate text-xs text-slate-400 dark:text-slate-500">
+                    {pathLabel(
+                      savedDevice.lastUsedPath ?? savedDevice.paths[0]?.address,
+                    ) || "已记住的设备"}
+                  </div>
+                </div>
+                {savedDevice.hasPassword && (
+                  <button
+                    type="button"
+                    onClick={() => quickConnect(savedDevice)}
+                    className="shrink-0 rounded-lg bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-600 transition-all duration-150 hover:bg-sky-500/20 active:scale-[0.98] dark:text-sky-400"
+                  >
+                    快速连接
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void forgetDevice(savedDevice)}
+                  title="忘记此设备"
+                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300"
+                >
+                  忘记
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -109,10 +157,28 @@ export function HomeScreen() {
             </p>
           </div>
         </div>
-        {!adding && (
-          <Button onClick={() => setAdding(true)}>＋ 连接新设备</Button>
+        {!addingDevice && (
+          <Button onClick={openAddDevice}>＋ 连接新设备</Button>
         )}
       </div>
+
+      {notice && (
+        <div className="jr-enter mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+          <span className="truncate text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            {notice}
+          </span>
+          <button
+            type="button"
+            onClick={clearNotice}
+            aria-label="关闭提示"
+            className="shrink-0 text-emerald-500 transition-colors duration-150 hover:text-emerald-700 dark:hover:text-emerald-200"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {order.map((id) => {
@@ -122,8 +188,8 @@ export function HomeScreen() {
             <SessionCard
               key={id}
               phase={s.phase}
-              title={s.device?.hostname ?? s.host}
-              subtitle={`${s.username}@${s.host}`}
+              title={s.displayName ?? s.device?.hostname ?? s.host}
+              subtitle={sessionPathLabel(s) || `${s.username}@${s.host}`}
               meta={s.device?.model}
               onOpen={() => focusTab(id)}
               onClose={() => closeTab(id)}
@@ -134,7 +200,7 @@ export function HomeScreen() {
         {/* Add-device card */}
         <button
           type="button"
-          onClick={() => setAdding(true)}
+          onClick={openAddDevice}
           className="jr-enter flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 text-slate-400 transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-400 hover:text-sky-500 active:scale-[0.99] dark:border-slate-600 dark:text-slate-500 dark:hover:border-sky-500/70 dark:hover:text-sky-400"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
@@ -144,7 +210,7 @@ export function HomeScreen() {
         </button>
       </div>
 
-      {adding && (
+      {addingDevice && (
         <div className="jr-enter mx-auto mt-6 w-full max-w-sm rounded-2xl border border-slate-200/80 bg-white/70 p-6 shadow-sm backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-800/40">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
@@ -152,7 +218,7 @@ export function HomeScreen() {
             </h2>
             <button
               type="button"
-              onClick={() => setAdding(false)}
+              onClick={closeAddDevice}
               className="rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300"
             >
               收起

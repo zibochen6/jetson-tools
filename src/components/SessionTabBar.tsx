@@ -1,4 +1,8 @@
-import { useSessionsStore, SessionPhase } from "../stores/sessionsStore";
+import {
+  sessionPathLabel,
+  useSessionsStore,
+  SessionPhase,
+} from "../stores/sessionsStore";
 import { useConnectionStore } from "../stores/connectionStore";
 
 /** Must equal Rust `commands::rdp::SESSION_TAB_BAR_INSET` (points). */
@@ -11,7 +15,13 @@ const DOT: Record<SessionPhase, string> = {
   error: "bg-red-500",
 };
 
-function labelFor(host: string, hostname?: string): string {
+/** Identity-v3: the display name is the tab title; the path is small print. */
+function labelFor(
+  displayName: string | null,
+  host: string,
+  hostname?: string,
+): string {
+  if (displayName && displayName.trim()) return displayName;
   return hostname && hostname.length > 0 ? hostname : host;
 }
 
@@ -73,15 +83,27 @@ export function SessionTabBar() {
             role="tab"
             aria-selected={active}
             onClick={() => focusTab(id)}
-            title={`${session.username}@${session.host}`}
+            title={`${session.username}@${
+              session.deviceId ?? session.host
+            } · ${sessionPathLabel(session)}`}
           >
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${DOT[session.phase]}`}
               aria-hidden
             />
             <span className="max-w-36 truncate font-medium">
-              {labelFor(session.host, session.device?.hostname)}
+              {labelFor(
+                session.displayName,
+                session.host,
+                session.device?.hostname,
+              )}
             </span>
+            {/* Current path (LAN / Tailscale + address) as small print. */}
+            {sessionPathLabel(session) && (
+              <span className="max-w-32 truncate text-[10px] font-normal opacity-60">
+                {sessionPathLabel(session)}
+              </span>
+            )}
             <button
               type="button"
               aria-label={`断开 ${session.host}`}

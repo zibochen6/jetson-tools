@@ -9,6 +9,8 @@ import { ReadyScreen } from "../features/connection/components/ReadyScreen";
 import { DesktopRunningScreen } from "../features/connection/components/DesktopRunningScreen";
 import { ErrorScreen } from "../features/connection/components/ErrorScreen";
 import { HostKeyPromptScreen } from "../features/connection/components/HostKeyPromptScreen";
+import { NameDeviceScreen } from "../features/connection/components/NameDeviceScreen";
+import { findSavedByDeviceId } from "../stores/connectionStore";
 import { DevScenarioPicker } from "../features/connection/components/DevScenarioPicker";
 import { DevNetworkProbe } from "../features/connection/components/DevNetworkProbe";
 import { UpdateChecker } from "../features/update/UpdateChecker";
@@ -35,17 +37,28 @@ function App() {
 
   // V0.4 handoff: a real-backend desktop launch is adopted by the sessions
   // store (tab bar) and the wizard resets — WITHOUT closing the desktop.
+  // Identity-v3: the session key is `username@deviceId`, so both addresses of
+  // one Jetson reuse one tab; the display name travels with the session.
   // Mock/dev mode keeps the legacy single-flow screens (no handoff).
   useEffect(() => {
     if (state !== "desktop_opened" || mode !== "real") return;
     const cs = useConnectionStore.getState();
+    const device = cs.device;
+    const deviceId = device?.deviceId ?? cs.form.deviceId ?? null;
+    const saved = findSavedByDeviceId(
+      cs.savedDevices,
+      deviceId,
+      cs.form.username,
+    );
     useSessionsStore.getState().register(
       {
-        host: cs.form.host,
+        host: device?.host ?? cs.form.host,
         username: cs.form.username,
         password: cs.form.password,
+        deviceId,
+        displayName: saved?.displayName ?? null,
       },
-      cs.device,
+      device,
     );
     cs.handoff();
   }, [state, mode]);
@@ -82,6 +95,9 @@ function App() {
   let screen;
   if (state === "idle") {
     screen = <HomeScreen />;
+  } else if (state === "naming_device") {
+    // Identity-v3: a brand-new machine-id must be named before provisioning.
+    screen = <NameDeviceScreen />;
   } else if (state === "error") {
     screen = <ErrorScreen />;
   } else if (state === "host_key_unknown" || state === "host_key_changed") {

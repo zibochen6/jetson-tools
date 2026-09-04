@@ -62,6 +62,12 @@ export interface LaunchOptions {
    * that predate multi-session ignore it.
    */
   sessionId?: string;
+  /**
+   * Whether a keyed session should take over the native desktop surface as it
+   * launches. Automatic recovery uses `false` so a background device cannot
+   * steal focus from the device the user is operating.
+   */
+  focusOnLaunch?: boolean;
 }
 
 /**
@@ -151,7 +157,10 @@ function mockReadyEnvironment(): RemoteEnvironmentReport {
     xfce_installed: true,
     xrdp_enabled: true,
     xrdp_active: true,
+    xrdp_sesman_active: true,
     port_3389_listening: true,
+    port_3350_listening: true,
+    xrdp_in_ssl_cert_group: true,
     session_configured: true,
     xsessionrc_ok: true,
     issues: [],

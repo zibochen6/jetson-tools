@@ -96,9 +96,11 @@ type RustPrepareResult =
   | { kind: "hostKeyChanged"; current: HostKeyInfo; previous: HostKeyInfo };
 
 function mapError(err: unknown): ConnectionFailure {
-  const code = (err as { code?: IpcErrorCode } | null)?.code;
-  const mapped = (code && CODE_MAP[code]) || "unknown";
-  return new ConnectionFailure(mapped);
+  const e = (err as { code?: IpcErrorCode; message?: string } | null) ?? {};
+  const mapped = (e.code && CODE_MAP[e.code]) || "unknown";
+  // Surface the backend's technical reason (never the password) so the error
+  // screen can tell "unreachable" from "auth" from "sudo" at a glance.
+  return new ConnectionFailure(mapped, e.message);
 }
 
 function abortied(): Error & { name: "AbortError" } {
@@ -134,6 +136,9 @@ export class TauriConnectionService implements ConnectionService {
           host: input.host,
           port: DEFAULT_SSH_PORT,
           username: input.username,
+          // Stable identity when connecting a remembered v3 device; the
+          // backend resolves the stored password by `user@deviceId`.
+          deviceId: input.deviceId ?? null,
           // Empty = the backend resolves the remembered password itself;
           // the stored secret never comes back to the frontend (V0.3).
           password: input.password || null,
@@ -177,6 +182,7 @@ export class TauriConnectionService implements ConnectionService {
           host: input.host,
           port: DEFAULT_SSH_PORT,
           username: input.username,
+          deviceId: input.deviceId ?? null,
           password: input.password || null,
         },
         hostKeyDecision: null as HostKeyDecision | null,
@@ -215,6 +221,8 @@ export class TauriConnectionService implements ConnectionService {
       // tunnel (KI-021); the typed host is kept for identity only.
       host: input.host,
       username: input.username,
+      // Stable identity: drives the tunnel device key + password lookup.
+      deviceId: input.deviceId ?? null,
       password: input.password || null,
     };
     try {
@@ -224,6 +232,7 @@ export class TauriConnectionService implements ConnectionService {
         return await invoke<RdpLaunchResult>("launch_session", {
           sessionId: opts.sessionId,
           request,
+          focusOnLaunch: opts.focusOnLaunch ?? true,
         });
       }
       return await invoke<RdpLaunchResult>("launch_remote_desktop", { request });
@@ -266,6 +275,36 @@ export async function networkProbe(
 ): Promise<NetworkProbe> {
   return invoke<NetworkProbe>("network_probe", { host, port });
 }
+/**
+ * One row of `probe_device_paths`: raw TCP RTT to `address:22` (identity-v3
+ * multi-path routing). Advisory only — never a product error.
+ */
+export interface PathProbeEntry {
+  address: string;
+  reachable: boolean;
+  rttMs: number | null;
+}
+
+/**
+ * Probe every candidate address of a device in parallel (TCP `:22`). The
+ * caller orders candidates by RTT and tries them in sequence.
+ */
+export async function probeDevicePaths(
+  addresses: string[],
+): Promise<PathProbeEntry[]> {
+  const unique = addresses.filter((a, i) => a.trim() && addresses.indexOf(a) === i);
+  if (unique.length === 0) return [];
+  try {
+    return await invoke<PathProbeEntry[]>("probe_device_paths", {
+      addresses: unique,
+    });
+  } catch {
+    // Outside Tauri / transient IPC failure — the caller keeps the original
+    // candidate order instead.
+    return [];
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Multi-device sessions (V0.4)                                       */
 /* ------------------------------------------------------------------ */
@@ -283,13 +322,19 @@ export interface SessionStatusEntry {
  */
 export class TauriSessionService {
   /** Re-open/relaunch one device's desktop under its session key. */
-  async launch(sessionId: string, input: RdpLaunchInput): Promise<RdpLaunchResult> {
+  async launch(
+    sessionId: string,
+    input: RdpLaunchInput,
+    options: { focusOnLaunch: boolean },
+  ): Promise<RdpLaunchResult> {
     try {
       return await invoke<RdpLaunchResult>("launch_session", {
         sessionId,
+        focusOnLaunch: options.focusOnLaunch,
         request: {
           host: input.host,
           username: input.username,
+          deviceId: input.deviceId ?? null,
           password: input.password || null,
         },
       });

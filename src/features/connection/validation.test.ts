@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  isValidDisplayName,
   isValidHost,
   isValidHostname,
   isValidIpv4,
   isValidPassword,
   isValidUsername,
+  MAX_DISPLAY_NAME,
   validateConnectionForm,
 } from "./validation";
 
@@ -134,6 +136,81 @@ describe("validateConnectionForm", () => {
       password: "",
       remember: false,
     });
+    expect(errors.password).toBeTruthy();
+  });
+});
+describe("identity-v3 validation", () => {
+  it("accepts a display name within the length bound", () => {
+    expect(isValidDisplayName("robotics")).toBe(true);
+    expect(isValidDisplayName("  实验室 mini  ")).toBe(true);
+    expect(isValidDisplayName("a".repeat(MAX_DISPLAY_NAME))).toBe(true);
+  });
+
+  it("rejects blank or over-long display names", () => {
+    expect(isValidDisplayName("")).toBe(false);
+    expect(isValidDisplayName("   ")).toBe(false);
+    expect(isValidDisplayName("a".repeat(MAX_DISPLAY_NAME + 1))).toBe(false);
+  });
+
+  it("blank password is valid when the deviceId matches a stored device", () => {
+    const saved = {
+      username: "seeed",
+      hasPassword: true,
+      deviceId: "5dbfb124",
+      paths: [{ address: "192.168.2.18" }],
+    };
+    const errors = validateConnectionForm(
+      {
+        // A different entry address, but the SAME device identity.
+        host: "100.114.170.49",
+        username: "seeed",
+        password: "",
+        remember: true,
+        deviceId: "5dbfb124",
+      },
+      saved,
+    );
+    expect(Object.keys(errors)).toHaveLength(0);
+  });
+
+  it("blank password is valid when the typed address is a known path", () => {
+    const saved = {
+      username: "seeed",
+      hasPassword: true,
+      deviceId: "5dbfb124",
+      paths: [
+        { address: "192.168.2.18" },
+        { address: "100.114.170.49" },
+      ],
+    };
+    const errors = validateConnectionForm(
+      {
+        host: "100.114.170.49",
+        username: "seeed",
+        password: "",
+        remember: true,
+      },
+      saved,
+    );
+    expect(Object.keys(errors)).toHaveLength(0);
+  });
+
+  it("requires a password for an address that is not a known path", () => {
+    const saved = {
+      username: "seeed",
+      hasPassword: true,
+      deviceId: "5dbfb124",
+      paths: [{ address: "192.168.2.18" }],
+    };
+    const errors = validateConnectionForm(
+      {
+        host: "10.9.9.9",
+        username: "seeed",
+        password: "",
+        remember: true,
+      },
+      saved,
+    );
     expect(errors.password).toBeTruthy();
   });
 });

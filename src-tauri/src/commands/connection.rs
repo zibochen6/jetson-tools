@@ -42,7 +42,7 @@ pub enum ProbeResult {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(dead_code)] // Cancelled reserved for future Rust-side cancellation
 pub enum ProbeErrorCode {
@@ -75,9 +75,11 @@ pub struct ProbeError {
 
 impl ProbeError {
     pub(crate) fn new(code: ProbeErrorCode, message: impl Into<String>) -> Self {
+        let message = message.into();
+        eprintln!("[jr-flow] ipc error {code:?}: {message}");
         Self {
             code,
-            message: message.into(),
+            message,
             detail: None,
         }
     }
@@ -97,10 +99,30 @@ impl From<RememberError> for ProbeError {
     }
 }
 
+/// Stable identity host for TOFU entries: the deviceId when known, the typed
+/// host otherwise. Both addresses of one Jetson share one TOFU entry.
+fn identity_host(input: &SshConnectionInput) -> String {
+    input
+        .device_id
+        .as_deref()
+        .filter(|i| !i.is_empty())
+        .unwrap_or(&input.host)
+        .to_string()
+}
+
+/// Stable per-device identity string used for TOFU / tunnel keys:
+/// `username@deviceId` when known, `username@host` otherwise (legacy).
+fn device_key(input: &SshConnectionInput) -> String {
+    match input.device_id.as_deref().filter(|i| !i.is_empty()) {
+        Some(id) => format!("{}@{}", input.username, id),
+        None => format!("{}@{}", input.username, input.host),
+    }
+}
+
 /// Resolve the SSH password: a typed password wins, otherwise fall back to the
-/// remembered one in the OS secret store (V0.3 auto-reconnect). The fallback
-/// resolves the secret-store account from remembered.json so tunnel mode
-/// (wire host rewritten to loopback, KI-021) still finds the stored secret.
+/// remembered one in the OS secret store (V0.3 auto-reconnect). With a
+/// deviceId the fallback resolves `user@deviceId` precisely even when several
+/// devices are remembered; without one it matches by host (legacy v2).
 fn resolve_ssh_password(
     app: &AppHandle,
     secrets: &FileSecretStore,
@@ -111,6 +133,7 @@ fn resolve_ssh_password(
     remember::resolve_password(
         &store,
         secrets,
+        input.device_id.as_deref(),
         &input.host,
         &input.username,
         input.password.as_deref(),
@@ -156,32 +179,32 @@ pub async fn probe_device(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    // 2. Ephemeral connect with TOFU host-key verification (wire endpoint).
+    // 2. Dial the ephemeral wire endpoint but scope TOFU to the real Jetson.
     eprintln!("[jr-flow] probe connecting...");
-    let expected = store.get_fingerprint(&wire.host, wire.port);
-    let mut session = match ssh::connect(&wire, expected.as_deref(), &config).await {
-        Ok(ssh::SshConnectOutcome::Connected(s)) => s,
-        Ok(ssh::SshConnectOutcome::HostKeyUnknown(key)) => {
+    let mut session = match connect_with_stable_identity(&wire, &input, &mut store, &config).await?
+    {
+        ssh::SshConnectOutcome::Connected(s) => s,
+        ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(ProbeResult::HostKeyUnknown { key });
         }
-        Ok(ssh::SshConnectOutcome::HostKeyChanged { current, expected }) => {
+        ssh::SshConnectOutcome::HostKeyChanged { current, expected } => {
+            let id_host = identity_host(&input);
             let previous = store
-                .get(&wire.host, wire.port)
+                .get(&id_host, input.port)
                 .map(|h| HostKeyInfo {
-                    host: wire.host.clone(),
-                    port: wire.port,
+                    host: id_host.clone(),
+                    port: input.port,
                     algorithm: h.algorithm,
                     fingerprint: h.fingerprint,
                 })
                 .unwrap_or_else(|| HostKeyInfo {
-                    host: wire.host.clone(),
-                    port: wire.port,
+                    host: id_host.clone(),
+                    port: input.port,
                     algorithm: "unknown".into(),
                     fingerprint: expected,
                 });
             return Ok(ProbeResult::HostKeyChanged { current, previous });
         }
-        Err(e) => return Err(map_ssh_error(e)),
     };
 
     // 3. Authenticate.
@@ -212,10 +235,27 @@ pub async fn probe_device(
 fn map_ssh_error(e: SshError) -> ProbeError {
     match e {
         SshError::Timeout => ProbeError::new(ProbeErrorCode::SshTimeout, "SSH connect timed out"),
-        SshError::Connect(_) => ProbeError::new(
-            ProbeErrorCode::ConnectionRefused,
-            "Could not reach the device",
-        ),
+        SshError::Connect(err) => {
+            // Password-only control plane: a russh transport error carrying an
+            // auth-related server message (e.g. "Authentication failure,
+            // remaining methods: publickey") is an auth failure, not a network
+            // problem. Mapped to AuthenticationFailed so the UI never sees a
+            // PublicKey-only hint.
+            let detail = err.to_string().to_lowercase();
+            if detail.contains("permission denied")
+                || detail.contains("authentication")
+                || detail.contains("auth ")
+            {
+                return ProbeError::new(
+                    ProbeErrorCode::AuthenticationFailed,
+                    "Authentication failed",
+                );
+            }
+            ProbeError::new(
+                ProbeErrorCode::ConnectionRefused,
+                "Could not reach the device",
+            )
+        }
         SshError::AuthRejected => ProbeError::new(
             ProbeErrorCode::AuthenticationFailed,
             "Authentication failed",
@@ -256,8 +296,57 @@ fn map_tunnel_error(e: TunnelError) -> ProbeError {
     }
 }
 
+/// Verify the SSH key against the stable Jetson identity while dialing its
+/// loopback tunnel. The identity is the deviceId (machine-id) when known —
+/// both addresses of one Jetson share one TOFU entry — falling back to the
+/// typed host. If an exact fingerprint was already approved under a legacy
+/// host or ephemeral loopback key, migrate that approval once.
+async fn connect_with_stable_identity(
+    wire: &SshConnectionInput,
+    identity: &SshConnectionInput,
+    store: &mut TrustStoreFile,
+    config: &SshConfig,
+) -> Result<ssh::SshConnectOutcome, ProbeError> {
+    let identity_host = identity_host(identity);
+    let expected = store.get_fingerprint(&identity_host, identity.port);
+    let outcome = ssh::connect_with_identity(
+        wire,
+        &identity_host,
+        identity.port,
+        expected.as_deref(),
+        config,
+    )
+    .await
+    .map_err(map_ssh_error)?;
+
+    if expected.is_none() {
+        if let ssh::SshConnectOutcome::HostKeyUnknown(key) = &outcome {
+            if store.contains_fingerprint(&key.fingerprint) {
+                store.save(key).map_err(|e| {
+                    ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}"))
+                })?;
+                eprintln!(
+                    "[jr-flow] migrated SSH trust to stable identity {}:{}",
+                    identity_host, identity.port
+                );
+                return ssh::connect_with_identity(
+                    wire,
+                    &identity_host,
+                    identity.port,
+                    Some(&key.fingerprint),
+                    config,
+                )
+                .await
+                .map_err(map_ssh_error);
+            }
+        }
+    }
+    Ok(outcome)
+}
+
 /// Establish (or reuse) the in-app loopback tunnel off the async runtime —
-/// spawning ssh + polling ports is blocking work.
+/// spawning ssh + polling ports is blocking work. The tunnel is keyed by the
+/// stable device identity so both addresses of one Jetson share it.
 async fn ensure_tunnel(
     tunnels: &TunnelManager,
     app: &AppHandle,
@@ -269,9 +358,10 @@ async fn ensure_tunnel(
     let host = input.host.clone();
     let username = input.username.clone();
     let remote_port = input.port;
+    let device_key = device_key(input);
     let password = password.to_string();
     tokio::task::spawn_blocking(move || {
-        manager.ensure(&app, &host, remote_port, &username, &password)
+        manager.ensure(&app, &host, remote_port, &device_key, &username, &password)
     })
     .await
     .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("tunnel task: {e}")))?
@@ -333,30 +423,30 @@ pub async fn prepare_remote_desktop(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    let expected = store.get_fingerprint(&wire.host, wire.port);
-    let mut session = match ssh::connect(&wire, expected.as_deref(), &config).await {
-        Ok(ssh::SshConnectOutcome::Connected(s)) => s,
-        Ok(ssh::SshConnectOutcome::HostKeyUnknown(key)) => {
+    let mut session = match connect_with_stable_identity(&wire, &input, &mut store, &config).await?
+    {
+        ssh::SshConnectOutcome::Connected(s) => s,
+        ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(PrepareResult::HostKeyUnknown { key });
         }
-        Ok(ssh::SshConnectOutcome::HostKeyChanged { current, expected }) => {
+        ssh::SshConnectOutcome::HostKeyChanged { current, expected } => {
+            let id_host = identity_host(&input);
             let previous = store
-                .get(&wire.host, wire.port)
+                .get(&id_host, input.port)
                 .map(|h| HostKeyInfo {
-                    host: wire.host.clone(),
-                    port: wire.port,
+                    host: id_host.clone(),
+                    port: input.port,
                     algorithm: h.algorithm,
                     fingerprint: h.fingerprint,
                 })
                 .unwrap_or_else(|| HostKeyInfo {
-                    host: wire.host.clone(),
-                    port: wire.port,
+                    host: id_host.clone(),
+                    port: input.port,
                     algorithm: "unknown".into(),
                     fingerprint: expected,
                 });
             return Ok(PrepareResult::HostKeyChanged { current, previous });
         }
-        Err(e) => return Err(map_ssh_error(e)),
     };
 
     session

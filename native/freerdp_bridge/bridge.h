@@ -50,6 +50,9 @@ typedef struct
 
 typedef struct
 {
+	/* Stable real-device identity for certificate TOFU. The TCP endpoint can
+	 * be an SSH loopback forward and must not become the certificate key. */
+	const char* certificate_name;
 	const char* host;
 	uint16_t port;
 	const char* username;
@@ -112,6 +115,9 @@ void jr_view_set_fill(void* view, uint8_t r, uint8_t g, uint8_t b);
 void jr_view_attach_input(void* view, void* session);
 /* Content-view size of an NSWindow in points (synchronous; 0 on failure). */
 void jr_window_content_size(void* ns_window, double* w, double* h);
+/* Height occupied by macOS titlebar/safe-area chrome inside the content view.
+ * Multi-device native surfaces reserve this in addition to the web tab bar. */
+double jr_window_safe_area_top(void* ns_window);
 void jr_view_present_buffer(void* view, const uint8_t* buffer, int width, int height,
                             int stride, int dirty_x, int dirty_y, int dirty_w, int dirty_h);
 

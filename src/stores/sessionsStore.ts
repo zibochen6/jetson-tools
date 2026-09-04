@@ -8,11 +8,14 @@ import {
   SessionStatusEntry,
   TauriSessionService,
 } from "../features/connection/tauriService";
+import { deviceKey, pathLabel } from "../features/connection/paths";
 
 /**
  * Multi-device sessions (V0.4). Each entry is a LIVE desktop session keyed by
- * `username@host`: the RDP connection stays open in the backend while its tab
- * is in the background, so switching never reconnects. The connection wizard
+ * `username@deviceId` (falling back to `username@host` for devices without a
+ * machine-id): the RDP connection stays open in the backend while its tab is
+ * in the background, so switching never reconnects. Both addresses of one
+ * Jetson map to the SAME key — one device, one desktop. The connection wizard
  * (connectionStore) hands a freshly opened desktop over via `register`.
  */
 
@@ -23,9 +26,13 @@ export type SessionPhase =
   | "error"; // relaunch failed; tab click retries
 
 export interface DeviceSession {
-  id: string; // `${username}@${host}` — the backend session key
-  host: string;
+  id: string; // `${username}@${deviceId}` — the backend session key
+  host: string; // the address that actually connected (entry path)
   username: string;
+  /** Stable identity (device-tree serial / machine-id); null for legacy host-keyed devices. */
+  deviceId: string | null;
+  /** The user-chosen display name; null until the device is named. */
+  displayName: string | null;
   /** Transient launch credential; memory-only, never persisted (PRD §29). */
   password: string;
   device: JetsonDevice | null;
@@ -34,9 +41,23 @@ export interface DeviceSession {
   retryPending: boolean;
 }
 
+/** The session's current path shown as small text (LAN / Tailscale + address). */
+export function sessionPathLabel(session: DeviceSession): string {
+  return pathLabel(session.host);
+}
+
 /** Injectable seam for tests (mirrors the connectionStore factory pattern). */
 export interface SessionDesktopGateway {
-  launch(sessionId: string, input: { host: string; username: string; password: string }): Promise<RdpLaunchResult>;
+  launch(
+    sessionId: string,
+    input: {
+      host: string;
+      username: string;
+      password: string;
+      deviceId?: string | null;
+    },
+    options: { focusOnLaunch: boolean },
+  ): Promise<RdpLaunchResult>;
   focus(sessionId: string | null): Promise<void>;
   close(sessionId: string): Promise<void>;
   allStatuses(): Promise<SessionStatusEntry[]>;
@@ -50,10 +71,13 @@ export interface SessionsStore {
   activeId: string | null;
 
   /** Wizard handoff: the desktop was just opened — track + focus it. */
-  register(
-    input: { host: string; username: string; password: string },
-    device: JetsonDevice | null,
-  ): void;
+  register(input: {
+    host: string;
+    username: string;
+    password: string;
+    deviceId?: string | null;
+    displayName?: string | null;
+  }, device: JetsonDevice | null): void;
   /** Tab click: focus a running desktop, or relaunch a ready/failed one. */
   focusTab(id: string): void;
   /** Show the device overview (hide every native view). */
@@ -84,20 +108,35 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
     /** Re-open a session's desktop (tab click on ready/error, auto-retry).
      * `force` bypasses the running guard — the auto-retry path uses it when
      * the backend session died but the store still shows "running". */
-    const relaunch = async (id: string, force = false): Promise<void> => {
+    const relaunch = async (
+      id: string,
+      force = false,
+      focusOnLaunch = true,
+    ): Promise<void> => {
       const session = get().sessions[id];
       if (!session) return;
       if (!force && session.phase === "running") return;
       patch(id, { phase: "launching" });
       try {
-        await gateway.launch(id, {
-          host: session.host,
-          username: session.username,
-          password: session.password,
-        });
-        // Launch focuses the native view backend-side.
+        await gateway.launch(
+          id,
+          {
+            host: session.host,
+            username: session.username,
+            password: session.password,
+            deviceId: session.deviceId,
+          },
+          { focusOnLaunch },
+        );
         patch(id, { phase: "running", retries: 0, retryPending: false });
-        set({ activeId: id });
+        if (focusOnLaunch) {
+          set({ activeId: id });
+        } else if (get().activeId === id) {
+          // Automatic retries always launch hidden to avoid a race where the
+          // user switches tabs during reconnect. Re-focus only if this tab is
+          // still selected when the new session is ready.
+          void gateway.focus(id);
+        }
       } catch (err) {
         patch(id, {
           phase: "error",
@@ -135,7 +174,7 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
       if (!session.retryPending) {
         patch(id, { retryPending: true, retries: session.retries + 1 });
         setTimeout(() => {
-          if (get().sessions[id]) void relaunch(id, true);
+          if (get().sessions[id]) void relaunch(id, true, false);
         }, RETRY_DELAY_MS);
       }
     };
@@ -146,13 +185,15 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
       activeId: null,
 
       register: (input, device) => {
-        const id = `${input.username}@${input.host}`;
+        const id = deviceKey(input.username, input.deviceId ?? null, input.host);
         set((s) => {
           const exists = Boolean(s.sessions[id]);
           const session: DeviceSession = {
             id,
             host: input.host,
             username: input.username,
+            deviceId: input.deviceId ?? null,
+            displayName: input.displayName ?? null,
             password: input.password,
             device,
             phase: "running",
