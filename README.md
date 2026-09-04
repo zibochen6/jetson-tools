@@ -12,7 +12,7 @@ No HDMI. No VNC setup. No display configuration.
 
 ## 这是什么
 
-零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。0.3.0 起支持**多设备同时连接**；0.3.2 修复后台重连抢占与隧道凭据隔离；**0.3.3 P0 稳定化**：输入/剪贴板全部改为单 owner 命令队列（FreeRDP API 只由 worker 线程调用，修复「剪贴板修好鼠标坏」的线程根因）、剪贴板所有权带 generation 防跨会话串台、支持 macOS 中文输入法（NSTextInputClient + RDP unicode 输入）、「连不上」细分为 6 类隧道错误、多设备隧道决策加 trace 与单测、bootstrap 支持 JetPack 5.x（Ubuntu 20.04）设备。
+零配置的 Jetson 无显示器（headless）远程桌面客户端。输入 IP + 用户名 + 密码，应用自动完成 SSH 登录 → 识别 Jetson → 检测/安装远程桌面 → 建立安全连接 → 打开 XFCE 桌面，支持断线重连恢复会话。0.3.0 起支持**多设备同时连接**；0.3.2 修复后台重连抢占与隧道凭据隔离；**0.3.3 P0 稳定化（单 owner 命令队列、剪贴板 generation、中文输入法、隧道错误细分、JetPack 5.x 支持）；0.3.4 修复新设备（Ubuntu 24.04）首次连接必败：sudo 票据跨 SSH channel 不生效导致安装远程桌面阶段退出码 1，改为脚本以用户身份运行 + 密码经 stdin 自管 sudo（KI-033）。
 
 （XRDP / xorgxrdp / XFCE / FreeRDP / SSH Tunnel 都是实现细节，用户无需理解。）
 

@@ -22,12 +22,18 @@ pub fn stage_message(stage: ProvisionStage) -> &'static str {
     }
 }
 
-/// `sudo_preflight` has already validated and cached authorization. The
-/// bootstrap command must therefore use that ticket non-interactively instead
-/// of receiving the password a second time on stdin: sudo may skip reading it,
-/// leaving the secret to be interpreted as the first line of the shell script.
+/// The bootstrap runs as the LOGIN USER (not via `sudo -n bash`): each remote
+/// exec opens a new SSH channel, and sudo tickets (1.9.15 / `use_pty`) are
+/// bound to the channel's pty/session context — a ticket cached by
+/// `sudo_preflight` in one channel does NOT authorize `sudo -n` in a later
+/// channel, so `sudo -n bash` failed with exit 1 ("a password is required")
+/// on Ubuntu 24.04. Instead the script's own documented remote contract is
+/// used: `printf '%s\n' "$SUDO_PASS" | ssh user@jetson 'bash <path>'` — the
+/// script escalates itself (`sudo -n` when a usable ticket exists, otherwise
+/// it reads exactly one stdin line as the sudo password). The password still
+/// travels only through the SSH channel stdin, never argv/logs.
 fn bootstrap_command(path: &str) -> String {
-    format!("sudo -n bash '{path}'")
+    format!("bash '{path}'")
 }
 
 pub fn stage_event(stage: ProvisionStage) -> ProvisionEvent {
@@ -105,8 +111,10 @@ where
         return Err(ProvisionError::TempFile);
     }
 
-    // Upload + run, guaranteeing cleanup on every exit path.
-    let run = provision_inner(executor, &path, &mut emit).await;
+    // Upload + run, guaranteeing cleanup on every exit path. The sudo password
+    // is fed to the script's stdin (the script reads exactly one line, and
+    // only when it cannot use a cached/passwordless sudo ticket).
+    let run = provision_inner(executor, &path, password, &mut emit).await;
     let _ = executor.exec(&format!("rm -f '{path}'")).await;
     run
 }
@@ -114,6 +122,7 @@ where
 async fn provision_inner<E, F>(
     executor: &mut E,
     path: &str,
+    password: &str,
     emit: &mut F,
 ) -> Result<(), ProvisionError>
 where
@@ -127,15 +136,19 @@ where
 
     let mut last_stage: Option<ProvisionStage> = None;
     let result = executor
-        .exec_with_stdin_lines(&bootstrap_command(path), &[], |line| {
-            if let Some(event) = parse_bootstrap_line(line) {
-                // Dedupe consecutive identical stages (start + done markers).
-                if last_stage != Some(event.stage) {
-                    last_stage = Some(event.stage);
-                    emit(event);
+        .exec_with_stdin_lines(
+            &bootstrap_command(path),
+            format!("{password}\n").as_bytes(),
+            |line| {
+                if let Some(event) = parse_bootstrap_line(line) {
+                    // Dedupe consecutive identical stages (start + done markers).
+                    if last_stage != Some(event.stage) {
+                        last_stage = Some(event.stage);
+                        emit(event);
+                    }
                 }
-            }
-        })
+            },
+        )
         .await?;
 
     match result.exit_code {
@@ -263,10 +276,67 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_reuses_preflight_authorization_without_replaying_password() {
+    fn bootstrap_runs_as_login_user_receiving_sudo_password_via_stdin() {
+        // Each remote exec opens a NEW SSH channel and sudo tickets (1.9.15 /
+        // use_pty) are channel-scoped: a preflight-cached ticket does NOT
+        // authorize `sudo -n` in a later channel (exit 1 "a password is
+        // required" — the Ubuntu 24.04 new-device failure). The script must
+        // therefore run as the login user and receive the sudo password on
+        // stdin (the script's documented remote contract).
         assert_eq!(
             bootstrap_command("/tmp/jetson-remote-bootstrap-ABC123.sh"),
-            "sudo -n bash '/tmp/jetson-remote-bootstrap-ABC123.sh'"
+            "bash '/tmp/jetson-remote-bootstrap-ABC123.sh'"
         );
+    }
+
+    #[tokio::test]
+    async fn provision_feeds_sudo_password_to_script_stdin() {
+        // The password must reach the bootstrap script's stdin (one line),
+        // never the command line.
+        use std::sync::Mutex;
+        static CAPTURED: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+
+        struct CapturingExec;
+        impl RemoteExecutor for CapturingExec {
+            async fn exec(&mut self, _cmd: &str) -> Result<RemoteCommandResult, SshError> {
+                Ok(RemoteCommandResult {
+                    stdout: b"/tmp/jr-boot-CAP.sh\n".to_vec(),
+                    stderr: vec![],
+                    exit_code: Some(0),
+                })
+            }
+            async fn exec_with_stdin(
+                &mut self,
+                _cmd: &str,
+                _stdin: &[u8],
+            ) -> Result<RemoteCommandResult, SshError> {
+                Ok(ok_result())
+            }
+            async fn exec_with_stdin_lines<G: FnMut(&str) + Send>(
+                &mut self,
+                cmd: &str,
+                stdin: &[u8],
+                mut on_line: G,
+            ) -> Result<RemoteCommandResult, SshError> {
+                CAPTURED
+                    .lock()
+                    .unwrap()
+                    .push((cmd.to_string(), stdin.to_vec()));
+                on_line("[bootstrap] step=verify status=done ready=true");
+                Ok(ok_result())
+            }
+        }
+
+        let mut events = vec![];
+        provision(&mut CapturingExec, "S3CRETPW", |e| events.push(e.stage))
+            .await
+            .unwrap();
+
+        let captured = CAPTURED.lock().unwrap();
+        let (cmd, stdin) = captured.last().expect("bootstrap run captured");
+        assert_eq!(cmd, "bash '/tmp/jr-boot-CAP.sh'");
+        assert!(!cmd.contains("S3CRETPW"));
+        assert_eq!(stdin, b"S3CRETPW\n");
+        assert!(events.contains(&ProvisionStage::Preflight));
     }
 }

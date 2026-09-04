@@ -249,3 +249,11 @@
 - **排查**：probe 曾报 `certificate not trusted` 且 `verify_cert` 已返回 1。对照 FreeRDP 3.31.0 源码：`accept_certificate=1` 时 `verification_status = certificate_store_save_data(...) ? 1 : -1` ——「接受并存储」要求**写盘** `~/.config/freerdp/server/<host>_<port>.pem`，写失败即回退为拒绝。该 probe 在受限沙箱写不了该目录导致误报；换可写目录后接受→存储→连接→出帧全部正常。
 - **结论**：App 证书代码与 FreeRDP 3.31 语义一致，无需修改。多设备临时端口下每设备累积多条 `<host>_<port>.pem`（KI-022 已知边界）。
 - **状态**：✅ 排查完毕，无代码变更（记录防复发误判）。
+
+## KI-033 — 新设备（Ubuntu 24.04）provision 必败：sudo 票据跨 SSH channel 不生效（已修复，0.3.4）
+
+- **症状**：连接全新 Jetson（SSH/认证/检测全部成功）后，安装远程桌面阶段必败：UI 报「远程桌面安装失败」，日志为 `ipc error ProvisionFailed: Remote desktop setup failed (exit Some(1))`，重试永远同样失败。
+- **根因**：provisioner 旧流程「通道 1 `sudo -S -v` 预验证缓存票据 → 后续通道 5 `sudo -n bash <script>` 以 root 跑脚本」。但 russh 每次 `exec` 都开**新的 SSH channel**，而 Ubuntu 24.04 的 sudo 1.9.15（`Defaults use_pty` + 默认 tty 时间戳）把票据绑定在 channel 的 pty/会话上下文——**跨 channel 不生效**，`sudo -n` 报 `a password is required` 退出码 1（正是 App 日志里的 exit Some(1)）。老设备（20.04/22.04 旧版 sudo）恰好能跨 channel 复用票据，掩盖了此问题。
+- **修复（0.3.4）**：改用 bootstrap.sh 自己文档化的远程契约——`bash <path>` 以登录用户身份跑脚本，sudo 密码经 stdin 喂给脚本（脚本内部自管升级：有可用票据/免密则 `sudo cmd`，否则读 stdin 一行密码逐次 `sudo -S`）。密码仍只走 SSH channel stdin，绝不进 argv/日志；preflight 预验证密码逻辑保留。
+- **真机验证（2026-09-04，100.105.116.71 / AGX Orin / Ubuntu 24.04）**：用比 App 更严苛的「每步独立 SSH 连接」复现新流程：preflight → mktemp → upload → chmod → `bash + stdin 密码` → **`ready=true` 退出码 0**；随后 RDP 隧道验证真实出帧（on_frame 54→631 持续、nnz>0、中心像素 XFCE 灰）。新设备从裸机到可用桌面一次通过。
+- **状态**：✅ 已修复并真机验证；回归测试覆盖（新 command 契约 + 密码经 stdin 断言）。
