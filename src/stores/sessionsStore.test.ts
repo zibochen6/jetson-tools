@@ -125,6 +125,38 @@ describe("sessionsStore (multi-device, V0.4)", () => {
     expect(gw.calls).toContain("focus:seeed@192.168.1.31");
   });
 
+  it("closeTab on the only session yields the screen back to the overview (KI-035)", () => {
+    const gw = fakeGateway();
+    const store = createSessionsStore(gw);
+    store.getState().register(A, null);
+    expect(store.getState().activeId).toBe("seeed@192.168.1.31");
+
+    store.getState().closeTab("seeed@192.168.1.31");
+    const s = store.getState();
+    expect(s.order).toEqual([]);
+    expect(s.activeId).toBeNull();
+    expect(gw.calls).toContain("close:seeed@192.168.1.31");
+    // Without this the backend never unmounts the native desktop view and the
+    // last frame stays on screen over the webview home forever.
+    expect(gw.calls).toContain("focus:null");
+  });
+
+  it("closeTab of a background tab leaves the focused desktop untouched (KI-035)", () => {
+    const gw = fakeGateway();
+    const store = createSessionsStore(gw);
+    store.getState().register(A, null);
+    store.getState().register(B, null);
+    store.getState().focusTab("seeed@192.168.1.31");
+    gw.calls.length = 0;
+
+    store.getState().closeTab("seeed@192.168.1.42");
+    expect(store.getState().activeId).toBe("seeed@192.168.1.31");
+    expect(gw.calls).toContain("close:seeed@192.168.1.42");
+    // The on-screen session must not be disturbed by closing a background tab.
+    expect(gw.calls).not.toContain("focus:null");
+    expect(gw.calls).not.toContain("focus:seeed@192.168.1.31");
+  });
+
   it("clean backend exit marks the tab ready and returns to overview", async () => {
     const gw = fakeGateway();
     const store = createSessionsStore(gw);

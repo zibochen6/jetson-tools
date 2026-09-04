@@ -269,3 +269,20 @@
   4. **selectedRange 返回有效空选区** `{0,0}`（对齐 GLFW/SDL/Chromium 实践）；attach 分离时清除组合状态；新增路由/组合/提交/命令诊断日志。
 - **真机验证（2026-09-04，100.72.12.62）**：CGEvent 合成键 + 设备侧 `xinput test` 地面真值：(a) 无组合态单字母直接 `IME commit→unicode sent→设备收到 key event`；(b) 合成组合（字母×2 + setMarkedText 逃代）后 **Enter 触发 `IME commit len=2 → unicode sent units=2`，设备收到两个字符的 press/release**（即原卡死场景）；(c) 无组合态 Enter 走 scancode，设备收到 Return(36)——三条路径全部符合设计。
 - **状态**：✅ 已修复并真机验证。
+
+## KI-035 — 关闭设备标签不会关闭桌面：原生视图永不卸载，最后一帧永久覆盖首页（已修复，0.3.6）
+
+- **症状**：点标签上的「×」后，标签从标签栏消失了，但远程桌面画面一直卡在窗口里不动，既不消失也回不到设备总览首页，只能退出 App。
+- **根因（两层）**：
+  1. **原生视图从不卸载**：`RdpSession::shutdown()` 只做了 `attach_input(None)` + 剪贴板停止 + `jr_session_disconnect` + join，**从未调用 `remove_from_window()`**（只有 `unfocus()` 调了）。而 `JRView` 是窗口 contentView 的 subview，**superview 持有强引用**：`jr_view_destroy` 里的 `__bridge_transfer` + release 只减一个引用计数，视图既不会 dealloc 也不会离开视图层级 —— 于是最后一帧桌面图像永久留在屏幕上，盖住 webview 首页。
+  2. **前端关闭最后一个标签时没有让出屏幕**：`sessionsStore.closeTab` 在被关标签是当前激活项时，只在「还有其它 running 会话」时才调 `gateway.focus(next)`；没有下一个会话时**只把 `activeId` 置 null，从不调 `focus(null)`**。后端 `focus_session(null)` → `hide_all()` → `unfocus()` 是唯一会卸载视图的兜底路径，因此这条路也断了。而 `gateway.close()` 是 fire-and-forget（异常被吞），失败时 UI 完全没有反馈。
+- **修复（0.3.6）**：
+  1. `shutdown()` 在阻塞式 disconnect/join **之前**先 `remove_from_window()`：视图立刻让出屏幕，即使传输层拆卸耗时，「×」也是即时生效；同时修好了重试路径 / `clear_exited` / legacy `close_remote_desktop` 等所有 teardown 路径。
+  2. `jr_view_destroy` 在 release 前先 `[v removeFromSuperview]`（C 层兜底，任何 drop 路径都不可能把已挂载的视图留在屏幕上）。
+  3. `closeTab` 在没有下一个可显示会话时显式 `void gateway.focus(null)`，与 `showOverview` 语义一致（关闭 IPC 慢/失败也能回到首页）。
+  4. 新增诊断：`[jr-flow] close_session id=…`、`[jr-view] unmount wasMounted=0|1`。
+- **真机验证（2026-09-04，100.72.12.62，真实非白屏桌面）**：按窗口 ID 截图（不受遮挡影响）+ CGEvent 精确点击（hover 变红自校验命中「×」）：
+  - 修复前：桌面区域像素**几乎完全不变**（diff=0.235，均值 128→127.8），标签却已消失 —— 卡死复现；
+  - 修复后：桌面区域**整体变为首页**（diff=131.31，均值 117.8/std 86.5 → 247.2/std 15.2），标签栏字形簇 36→15（会话标签消失，只剩总览）；日志依次出现 `close_session id=…` → `ERRCONNECT_CONNECT_CANCELLED` → **`unmount wasMounted=1`**。
+  - 回归测试：`closeTab` 关掉唯一会话时必须 `focus:null`（**去掉修复该测试即失败**，已实测）；关闭后台标签不得干扰当前屏幕。
+- **状态**：✅ 已修复并真机验证。

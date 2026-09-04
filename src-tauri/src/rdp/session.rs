@@ -347,6 +347,13 @@ impl RdpSession {
             unsafe { ffi::jr_clipboard_sync_stop() };
             self.clipboard_active = false;
         }
+        // Yield the screen BEFORE the blocking disconnect/join below (KI-035).
+        // The view is a subview of the window's content view, which keeps a
+        // strong reference to it: dropping `NativeView` alone never removes it,
+        // so a closed-but-focused session would leave its last desktop frame
+        // on screen forever, hiding the webview home. Removing first also makes
+        // the tab "×" feel instant even while the transport tears down.
+        self._view.remove_from_window();
         unsafe { ffi::jr_session_disconnect(self.session) };
         if let Some(w) = self.worker.take() {
             let _ = w.join();

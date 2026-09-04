@@ -245,6 +245,13 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
           if (nextRunning) {
             set({ activeId: nextRunning });
             void gateway.focus(nextRunning);
+          } else {
+            // No other desktop to show: explicitly yield the screen so the
+            // webview overview becomes visible again. The backend close is
+            // best-effort/fire-and-forget, so without this the native view of
+            // the just-closed session can stay mounted over the home screen
+            // (KI-035: "closing the tab does not close the desktop").
+            void gateway.focus(null);
           }
         }
       },

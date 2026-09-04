@@ -479,6 +479,7 @@ pub async fn close_session(
     embedded: State<'_, RdpSessionManager>,
     session_id: String,
 ) -> Result<(), RdpIpcError> {
+    eprintln!("[jr-flow] close_session id={session_id}");
     match engine() {
         Engine::Embedded => embedded
             .close_keyed(&session_id)

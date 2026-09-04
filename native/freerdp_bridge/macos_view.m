@@ -890,7 +890,11 @@ void jr_view_destroy(void* handle)
 		return;
 	run_on_main(^{
 	  JRView* v = (__bridge_transfer JRView*)handle;
-	  (void)v;
+	  /* KI-035: the superview (window content view) holds a strong reference, so
+	   * releasing our handle alone would neither dealloc the view nor take it
+	   * off screen — the last presented frame would stay visible forever.
+	   * Detach explicitly so destroy always frees the screen. */
+	  [v removeFromSuperview];
 	});
 }
 
@@ -949,7 +953,9 @@ void jr_view_remove_from_window(void* handle)
 {
 	JRView* v = (__bridge JRView*)handle;
 	run_on_main(^{
+	  BOOL was_mounted = (v.superview != nil);
 	  [v removeFromSuperview];
+	  NSLog(@"[jr-view] unmount wasMounted=%d", was_mounted);
 	});
 }
 
