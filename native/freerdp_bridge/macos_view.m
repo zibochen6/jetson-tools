@@ -13,6 +13,8 @@
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include "bridge.h"
 
 static void jr_cg_buffer_release(void* info, const void* data, size_t size)
@@ -24,6 +26,9 @@ static void jr_cg_buffer_release(void* info, const void* data, size_t size)
 
 /* Apple virtual key code -> XT (PS/2 set 1) make code; `ext` = E0-prefixed. */
 static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext);
+/* True when a keyCode is a TEXT key (letter/digit/punctuation/space/dead-key)
+ * rather than a navigation/function/command key routed on the scancode path. */
+static BOOL jr_is_text_key(unsigned short vk);
 
 /* Modifier keys forwarded via flagsChanged (KI-023 stuck-modifier guard):
  * vk -> RDP scancode + shared NSEventModifierFlag bit + E0 preview flag.
@@ -62,10 +67,12 @@ static int jr_mod_index(unsigned short vk)
 	return -1;
 }
 
-@interface JRView : NSView
+@interface JRView : NSView <NSTextInputClient>
 - (void)presentBuffer:(uint8_t*)buffer width:(int)w height:(int)h stride:(int)s;
 - (void)setFillRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b;
 - (void)attachInput:(jr_session_t*)session;
+- (BOOL)jrShouldUseTextInput:(NSEvent*)event;
+- (void)jrSendScancode:(NSEvent*)event down:(BOOL)down;
 @end
 
 @implementation JRView
@@ -80,6 +87,8 @@ static int jr_mod_index(unsigned short vk)
 	id _resignActiveObs;         /* NSApp did-resign-active observer      */
 	int _dragLog;
 	int _moveLog;
+	NSMutableAttributedString* _markedText; /* IME composing text (never sent) */
+	NSRange _markedRange;                    /* current marked range             */
 }
 
 - (instancetype)initWithFrame:(NSRect)frame
@@ -182,7 +191,7 @@ static int jr_mod_index(unsigned short vk)
 		 * held (KI-023). No-op while the session isn't connected yet; the
 		 * bridge re-runs the same reset from PostConnect once it is. Also runs
 		 * on every tab-switch refocus. */
-		if (jr_session_reset_keyboard_modifiers(session) == 0)
+		if (jr_session_enqueue_reset_modifiers(session) == 0)
 			NSLog(@"[jr-input] attach: keyboard modifier reset sent");
 		if (self.window)
 			[self.window makeFirstResponder:self];
@@ -202,7 +211,7 @@ static int jr_mod_index(unsigned short vk)
 {
 	if (!_inputSession)
 		return;
-	if (jr_session_reset_keyboard_modifiers(_inputSession) == 0)
+	if (jr_session_enqueue_reset_modifiers(_inputSession) == 0)
 		NSLog(@"[jr-input] keyboard modifier sweep sent (focus/window change)");
 	memset(_modHeld, 0, sizeof(_modHeld));
 	_lastModifiers = 0;
@@ -325,7 +334,7 @@ static int jr_mod_index(unsigned short vk)
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
 	{
 		_pressedButtons |= 1;
-		jr_session_send_mouse_button(_inputSession, 1, 1, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 1, 1, x, y);
 	}
 }
 
@@ -336,7 +345,7 @@ static int jr_mod_index(unsigned short vk)
 	_pressedButtons &= ~1;
 	/* xrdp: a release is BUTTON1 without DOWN (a pure MOVE never releases). */
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
-		jr_session_send_mouse_button(_inputSession, 1, 0, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 1, 0, x, y);
 }
 
 - (void)rightMouseDown:(NSEvent*)e
@@ -345,7 +354,7 @@ static int jr_mod_index(unsigned short vk)
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
 	{
 		_pressedButtons |= 2;
-		jr_session_send_mouse_button(_inputSession, 2, 1, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 2, 1, x, y);
 	}
 }
 
@@ -354,7 +363,7 @@ static int jr_mod_index(unsigned short vk)
 	int x, y;
 	_pressedButtons &= ~2;
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
-		jr_session_send_mouse_button(_inputSession, 2, 0, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 2, 0, x, y);
 }
 
 - (void)otherMouseDown:(NSEvent*)e
@@ -365,7 +374,7 @@ static int jr_mod_index(unsigned short vk)
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
 	{
 		_pressedButtons |= 4;
-		jr_session_send_mouse_button(_inputSession, 3, 1, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 3, 1, x, y);
 	}
 }
 
@@ -376,7 +385,7 @@ static int jr_mod_index(unsigned short vk)
 		return;
 	_pressedButtons &= ~4;
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
-		jr_session_send_mouse_button(_inputSession, 3, 0, x, y);
+		jr_session_enqueue_mouse_button(_inputSession, 3, 0, x, y);
 }
 
 - (void)mouseDragged:(NSEvent*)e
@@ -388,7 +397,7 @@ static int jr_mod_index(unsigned short vk)
 		if (_dragLog % 10 == 1)
 			NSLog(@"[jr-input] mouseDragged #%d x=%d y=%d buttons=%d", _dragLog, x, y,
 			      _pressedButtons);
-		jr_session_send_mouse_move(_inputSession, x, y, _pressedButtons);
+		jr_session_enqueue_mouse_move(_inputSession, x, y);
 	}
 	else
 		NSLog(@"[jr-input] mouseDragged MAPFAIL");
@@ -411,7 +420,7 @@ static int jr_mod_index(unsigned short vk)
 	if (_moveLog % 50 == 1)
 		NSLog(@"[jr-input] mouseMoved #%d", _moveLog);
 	if ([self mapPoint:e.locationInWindow toX:&x y:&y])
-		jr_session_send_mouse_move(_inputSession, x, y, _pressedButtons);
+		jr_session_enqueue_mouse_move(_inputSession, x, y);
 }
 
 - (void)scrollWheel:(NSEvent*)e
@@ -439,32 +448,156 @@ static int jr_mod_index(unsigned short vk)
 		ny = 1;
 	if (dxi < 0)
 		nx = 1;
-	jr_session_send_mouse_wheel(_inputSession, abs(dyi), ny, abs(dxi), nx, x, y);
+	jr_session_enqueue_mouse_wheel(_inputSession, abs(dyi), ny, abs(dxi), nx, x, y);
+}
+
+/* Text-input routing (macOS IME / §19–§24). */
+- (BOOL)jrShouldUseTextInput:(NSEvent*)e
+{
+	NSUInteger mods = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+	/* Command/Control combos (Cmd+key, Ctrl+C/V, …) stay on the physical
+	 * scancode path so remote shortcuts keep their semantics (Cmd = Super;
+	 * Ctrl+key = remote Ctrl+key). Plain and Option-modified text go through
+	 * the input method (dead keys + Pinyin/Japanese/Korean/emoji). */
+	if (mods & (NSEventModifierFlagCommand | NSEventModifierFlagControl))
+		return NO;
+	return jr_is_text_key(e.keyCode);
+}
+
+- (void)jrSendScancode:(NSEvent*)e down:(BOOL)down
+{
+	unsigned char sc;
+	BOOL ext;
+	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
+	{
+		NSLog(@"[jr-input] unmapped vk=0x%02X (dropped)", e.keyCode);
+		return;
+	}
+	jr_session_enqueue_key_scancode(_inputSession, down ? 1 : 0, down && e.isARepeat ? 1 : 0,
+	                                sc, ext ? 1 : 0);
+	NSLog(@"[jr-input] key%@ vk=0x%02X sc=0x%02X%s repeat=%d", down ? @"Down" : @"Up",
+	      e.keyCode, sc, ext ? " ext" : "", e.isARepeat ? 1 : 0);
 }
 
 - (void)keyDown:(NSEvent*)e
 {
-	unsigned char sc;
-	BOOL ext;
 	if (!_inputSession)
 		return;
-	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
+	if ([self jrShouldUseTextInput:e])
+	{
+		/* Route through the IME. Committed text arrives in insertText: — the
+		 * composing (pinyin) letters are NEVER forwarded (no "nihao你好"). */
+		[self interpretKeyEvents:@[ e ]];
 		return;
-	jr_session_send_key_scancode(_inputSession, 1, e.isARepeat ? 1 : 0, sc, ext ? 1 : 0);
-	NSLog(@"[jr-input] keyDown vk=0x%02X sc=0x%02X%s repeat=%d", e.keyCode, sc,
-	      ext ? " ext" : "", e.isARepeat ? 1 : 0);
+	}
+	[self jrSendScancode:e down:YES];
 }
 
 - (void)keyUp:(NSEvent*)e
 {
-	unsigned char sc;
-	BOOL ext;
 	if (!_inputSession)
 		return;
-	if (!jr_scancode_for_vk(e.keyCode, &sc, &ext))
+	/* Text keys were fully handled by the IME on keyDown (unicode press+release
+	 * is self-contained), so no scancode release is emitted for them — avoids
+	 * double-sending a character. */
+	if ([self jrShouldUseTextInput:e])
 		return;
-	jr_session_send_key_scancode(_inputSession, 0, 0, sc, ext ? 1 : 0);
-	NSLog(@"[jr-input] keyUp vk=0x%02X sc=0x%02X%s", e.keyCode, sc, ext ? " ext" : "");
+	[self jrSendScancode:e down:NO];
+}
+
+#pragma mark - NSTextInputClient
+
+- (BOOL)hasMarkedText
+{
+	return _markedRange.length > 0;
+}
+
+- (NSRange)markedRange
+{
+	return _markedRange.length > 0 ? _markedRange : NSMakeRange(NSNotFound, 0);
+}
+
+- (NSRange)selectedRange
+{
+	return NSMakeRange(NSNotFound, 0);
+}
+
+- (void)setMarkedText:(id)string
+        selectedRange:(NSRange)selectedRange
+     replacementRange:(NSRange)replacementRange
+{
+	(void)selectedRange;
+	(void)replacementRange;
+	NSString* s = [string isKindOfClass:[NSString class]]
+	                  ? (NSString*)string
+	                  : [(NSAttributedString*)string string];
+	if (!_markedText)
+		_markedText = [[NSMutableAttributedString alloc] init];
+	[_markedText replaceCharactersInRange:NSMakeRange(0, _markedText.length) withString:s];
+	_markedRange = NSMakeRange(0, s.length);
+	/* Deliberately DO NOT forward the marked text — only insertText (commit)
+	 * is sent to the remote (no raw pinyin leak). */
+}
+
+- (void)unmarkText
+{
+	if (_markedText)
+		[_markedText replaceCharactersInRange:NSMakeRange(0, _markedText.length) withString:@""];
+	_markedRange = NSMakeRange(NSNotFound, 0);
+}
+
+- (NSArray*)validAttributesForMarkedText
+{
+	return @[];
+}
+
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range
+                                               actualRange:(NSRangePointer)actualRange
+{
+	(void)range;
+	if (actualRange)
+		*actualRange = NSMakeRange(NSNotFound, 0);
+	return [[NSAttributedString alloc] init];
+}
+
+- (void)insertText:(id)string replacementRange:(NSRange)replacementRange
+{
+	(void)replacementRange;
+	NSString* s = [string isKindOfClass:[NSString class]]
+	                  ? (NSString*)string
+	                  : [(NSAttributedString*)string string];
+	[self unmarkText];
+	if (s.length > 0 && _inputSession)
+	{
+		NSLog(@"[jr-input] IME commit len=%zu", (size_t)s.length);
+		jr_session_enqueue_unicode_text(_inputSession, [s UTF8String]);
+	}
+}
+
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange
+{
+	(void)range;
+	if (actualRange)
+		*actualRange = NSMakeRange(0, 0);
+	if (!self.window)
+		return NSZeroRect;
+	/* Anchor the candidate window to the view's lower-left (screen coords). */
+	NSRect r = NSMakeRect(NSMinX(self.bounds), NSMinY(self.bounds), 0, NSHeight(self.bounds));
+	return [self.window convertRectToScreen:r];
+}
+
+- (NSUInteger)characterIndexForPoint:(NSPoint)point
+{
+	(void)point;
+	return 0;
+}
+
+- (void)doCommandBySelector:(SEL)selector
+{
+	/* Movement/command selectors emitted while composing are not forwarded to
+	 * the remote (the remote has no composing buffer); candidate-window
+	 * navigation is handled by the macOS input method itself. */
+	(void)selector;
 }
 
 - (void)flagsChanged:(NSEvent*)e
@@ -503,7 +636,7 @@ static int jr_mod_index(unsigned short vk)
 		return;
 	}
 
-	jr_session_send_key_scancode(_inputSession, down, 0, m->sc, m->ext ? 1 : 0);
+	jr_session_enqueue_key_scancode(_inputSession, down, 0, m->sc, m->ext ? 1 : 0);
 	_modHeld[idx] = down;
 	_lastModifiers = now;
 	NSLog(@"[jr-input] flagsChanged vk=0x%02X sc=0x%02X%s -> %s", e.keyCode, m->sc,
@@ -613,6 +746,32 @@ static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext)
 		case 0x7E: *out = 0x48; *ext = YES; return YES; /* Up */
 		default:
 			return NO;
+	}
+}
+
+/* A keyCode is a TEXT key (routed through NSTextInputClient) unless it is a
+ * navigation, function, command, or keypad key. Letters/digits/punctuation and
+ * space are text; modifiers never arrive here (they come via flagsChanged). */
+static BOOL jr_is_text_key(unsigned short vk)
+{
+	switch (vk)
+	{
+		/* Return / Tab / Backspace / Escape */
+		case 0x24: case 0x30: case 0x33: case 0x35:
+		/* Insert/Help / Home / PageUp / ForwardDelete / End / PageDown */
+		case 0x72: case 0x73: case 0x74: case 0x75: case 0x77: case 0x79:
+		/* Arrow keys */
+		case 0x7B: case 0x7C: case 0x7D: case 0x7E:
+		/* Function keys F1..F15 */
+		case 0x7A: case 0x78: case 0x63: case 0x76: case 0x60: case 0x61: case 0x62:
+		case 0x64: case 0x65: case 0x67: case 0x6D: case 0x6F: case 0x69: case 0x6B: case 0x71:
+		/* Keypad */
+		case 0x41: case 0x43: case 0x45: case 0x4B: case 0x4C: case 0x4E:
+		case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: case 0x57:
+		case 0x58: case 0x59: case 0x5B: case 0x5C:
+			return NO;
+		default:
+			return YES;
 	}
 }
 
@@ -798,18 +957,46 @@ void jr_view_present_buffer(void* handle, const uint8_t* buffer, int width, int 
 }
 /* ------------------------------------------------------------------ */
 /* Clipboard sync: NSPasteboard <-> CLIPRDR (text only).               */
+/* Single-owner + generation: only the focused session may write the   */
+/* Mac pasteboard, and a delayed remote callback from a no-longer-     */
+/* focused session is dropped by owner/generation re-validation (§17). */
 /* ------------------------------------------------------------------ */
 
+/* Main-thread-confined owner (the NSTimer runs on the main thread). */
 static jr_session_t* g_clipSession = NULL;
+/* Cross-thread owner view (the FreeRDP worker reads these via the helpers). */
+static _Atomic(uintptr_t) g_clip_owner = 0;
+static _Atomic(uint64_t) g_clip_generation = 0;
+
 static NSTimer* g_clipTimer = nil;
 static NSInteger g_lastCount = 0;
 static BOOL g_suppressNext = NO;
 static NSString* g_lastText = nil;
 
-void jr_mac_clip_set(const char* utf8)
+int jr_clip_is_owner(void* session)
+{
+	return atomic_load(&g_clip_owner) == (uintptr_t)session;
+}
+
+uint64_t jr_clip_generation(void)
+{
+	return atomic_load(&g_clip_generation);
+}
+
+/* Remote -> Mac. Runs on the FreeRDP worker; the main-thread block re-checks
+ * owner+generation so a delayed session-A callback can never overwrite the Mac
+ * pasteboard after the user switched to session B. dispatch_ASYNC — the worker
+ * never blocks on the main queue (single-owner rule, §15). */
+void jr_mac_clip_set(void* session, uint64_t generation, const char* utf8)
 {
 	NSString* s = [NSString stringWithUTF8String:(utf8 ? utf8 : "")];
 	run_on_main(^{
+	  if (atomic_load(&g_clip_owner) != (uintptr_t)session ||
+	      atomic_load(&g_clip_generation) != generation)
+	  {
+		  NSLog(@"[jr-clip] remote->mac dropped (stale owner/generation)");
+		  return;
+	  }
 	  NSPasteboard* pb = [NSPasteboard generalPasteboard];
 	  g_suppressNext = YES;
 	  [pb clearContents];
@@ -817,23 +1004,6 @@ void jr_mac_clip_set(const char* utf8)
 	  g_lastCount = pb.changeCount;
 	  g_lastText = s;
 	});
-}
-
-char* jr_mac_clip_get(void)
-{
-	if ([NSThread isMainThread])
-	{
-		NSString* s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-		return s ? strdup([s UTF8String]) : NULL;
-	}
-	__block char* out = NULL;
-	/* CLIPRDR callbacks run on the FreeRDP worker thread; NSPasteboard
-	 * belongs on the AppKit main thread. */
-	dispatch_sync(dispatch_get_main_queue(), ^{
-	  NSString* s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-	  out = s ? strdup([s UTF8String]) : NULL;
-	});
-	return out;
 }
 
 static void jr_clip_timer_tick(NSTimer* t)
@@ -861,16 +1031,28 @@ static void jr_clip_timer_tick(NSTimer* t)
 	if (g_lastText && [s isEqualToString:g_lastText])
 		return;
 	g_lastText = s;
-	jr_session_set_clipboard_text(g_clipSession, [s UTF8String]);
+	NSLog(@"[jr-clip][session=%p] mac-change len=%zu", g_clipSession, strlen([s UTF8String]));
+	/* Snapshot happens here, on the main thread. Enqueue so the WORKER stores
+	 * it and drives the CLIPRDR handshake — the main thread never touches
+	 * FreeRDP clipboard APIs. */
+	jr_session_enqueue_local_clipboard_text(g_clipSession, [s UTF8String]);
 }
 
 void jr_clipboard_sync_start(void* session)
 {
 	run_on_main(^{
 	  g_clipSession = (jr_session_t*)session;
+	  atomic_store(&g_clip_owner, (uintptr_t)session);
+	  atomic_fetch_add(&g_clip_generation, 1); /* stale callbacks are invalidated */
 	  g_lastCount = [[NSPasteboard generalPasteboard] changeCount];
 	  g_lastText = nil;
 	  g_suppressNext = NO;
+	  /* Store the current pasteboard snapshot synchronously (thread-safe, no
+	   * handshake) so MonitorReady can offer it on connect without blocking
+	   * the worker on NSPasteboard. */
+	  NSString* s0 = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+	  if (s0)
+		  jr_clip_store_text(g_clipSession, [s0 UTF8String]);
 	  if (g_clipTimer)
 		  [g_clipTimer invalidate];
 	  g_clipTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
@@ -890,5 +1072,7 @@ void jr_clipboard_sync_stop(void)
 		  g_clipTimer = nil;
 	  }
 	  g_clipSession = NULL;
+	  atomic_store(&g_clip_owner, 0);
+	  atomic_fetch_add(&g_clip_generation, 1); /* invalidate any in-flight write */
 	});
 }

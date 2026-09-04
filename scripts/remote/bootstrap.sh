@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# bootstrap.sh — 幂等地在 Ubuntu(22.04/24.04) Jetson 上配置 XRDP + xorgxrdp + XFCE 虚拟桌桌面。
+# bootstrap.sh — 幂等地在 Ubuntu(20.04/22.04/24.04) Jetson 上配置 XRDP + xorgxrdp + XFCE 虚拟桌面。
 #
 # 目标拓扑（PRD）：XRDP → xorgxrdp → Xorg(:10 虚拟) → XFCE。不依赖 HDMI / DISPLAY :0 / Wayland / GNOME。
-#
 # 设计约束：
 #   * 幂等：重复运行不破坏系统（包已装 → 跳过；配置已对 → 跳过；服务已是 active → 跳过）
 #   * 稳定优先：只装 apt distro 包，绝不 source build
@@ -53,7 +52,7 @@ log "phase=start user=$SESSION_USER root=$([ "$(id -u)" -eq 0 ] && echo yes || e
 # ---------- 1. 发行版识别（决定包名分支） ----------
 UBUNTU_VERSION_ID="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')"
 case "$UBUNTU_VERSION_ID" in
-  22.04|24.04) log "step=detect_os ubuntu=$UBUNTU_VERSION_ID" ;;
+  20.04|22.04|24.04) log "step=detect_os ubuntu=$UBUNTU_VERSION_ID" ;;
   *) log "step=error unsupported_os=$UBUNTU_VERSION_ID"; exit 2 ;;
 esac
 

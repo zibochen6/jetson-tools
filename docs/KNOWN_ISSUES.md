@@ -208,3 +208,44 @@
 - **规避（identity-v3）**：`deviceId` 优先取 `/proc/device-tree/serial-number`（Jetson 模组出厂序列号，每板唯一、重装系统不变；真机验证 mini=`1421123007848`），无序列号才回退 machine-id，两者皆无回退 host 身份（legacy）。见 ADR-031。
 - **附带**：detect.sh 的路径采集同时按接口名过滤虚拟网桥（`l4tbr0`/`docker*`/`br-*` 等）——真机上 Seeed 的 L4T USB 桥用 192.168.56.0/24（不是 55），仅靠网段过滤会漏。
 - **状态**：✅ 已在 identity-v3 实现中规避；robotics 板的序列号唯一性待其网络恢复后复核（模组序列号为出厂烧录，风险极低）。
+
+## KI-027 — AppKit 主线程直呼 FreeRDP API：剪贴板修好鼠标坏 / 鼠标修好剪贴板坏（已修复，0.3.3）
+
+- **症状**：历史症状「修好剪贴板后拖不动 XFCE 窗口」「修好拖拽后剪贴板断」。表现为不可复现的输入紊乱、偶发卡死。
+- **根因**：v0.3.2 及之前的线程模型——AppKit 主线程的 mouse/key 事件处理器直接调用 `freerdp_input_send_*`；NSTimer（主线程）直接调 `ClientFormatList`；而 FreeRDP worker 线程的 CLIPRDR 回调又 `dispatch_sync` 回主线程读 `NSPasteboard`。跨线程 FreeRDP 访问 + 主线程阻塞 + 锁反转的组合，任何一个时序都可能让 input/clipboard 互相破坏。
+- **修复（单 owner 规则，0.3.3）**：新增每会话命令队列（`native/freerdp_bridge/queue.{c,h}`，纯 C/pthread、独立可测）。AppKit 主线程只 `enqueue`（mouse/key/unicode/剪贴板快照/resize/修饰键清扫）并 SetEvent 唤醒；FreeRDP worker 在事件循环里 drain 并**唯一地**调用 FreeRDP 输入/CLIPRDR API，wake event 追加进 `WaitForMultipleObjects`。队列保证：BUTTON/KEY 严格 FIFO、连续 MOVE 合并为最新、绝不跨按键边界合并、溢出时淘汰最老 MOVE 绝不丢按键配对。
+- **Wake 事件坑**：WinPR `CreateEventA` 不支持 auto-reset（运行时日志可证）——必须 manual-reset + worker 每轮 `ResetEvent`。
+- **状态**：✅ 已修复（FFI 队列测试全绿；真机 B 会话验证）。KI-018 鼠标拖拽契约保持不变并有队列级回归测试。
+
+## KI-028 — 剪贴板 worker dispatch_sync 主线程 + 裸全局 g_clipSession 跨会话污染（已修复，0.3.3）
+
+- **症状**：多设备下剪贴板偶发「A 的内容盖到 B」；worker 被 NSPasteboard 慢 I/O 阻塞，放大 KI-027 的输入紊乱。
+- **根因**：`jr_mac_clip_get()`（worker）`dispatch_sync` 回主线程；`g_clipSession` 裸全局无 generation，A 的迟到回调在用户切到 B 后仍写 Mac 剪贴板。
+- **修复（v0.3.3）**：Mac→远端改为主线程快照 → 入队 `LOCAL_CLIPBOARD_TEXT` → worker 存快照 + 发 `ClientFormatList`（初始快照由 `jr_clipboard_sync_start` 主线程直接线程安全写入，MonitorReady 即可宣告）；远端→Mac 改 `dispatch_async` + 主线程复验 `_Atomic` owner/generation（迟到回调丢弃）；`ServerFormatDataRequest` 只读 session 拥有的 `clip_text` 快照。
+- **状态**：✅ 已修复（编解码 FFI 测试含中文/emoji 代理对全绿；真机 B 会话 CLIPRDR 握手实测通过）。
+
+## KI-029 — macOS 中文 IME 无法输入（已修复，0.3.3）
+
+- **症状**：Mac 拼音输入法在远程桌面内无法输入中文——keyDown 只走 scancode 映射，IME 组合/提交从未到达远端。
+- **修复（v0.3.3）**：`JRView` 实现 `NSTextInputClient`（最小正确集）。普通文本键走 `interpretKeyEvents` → `insertText` 提交 → `enqueue_unicode_text` → worker 解码 UTF-8→UTF-16 码元（含代理对）逐码元 unicode press+release；组合期拼音原始字母**不转发**。导航/功能/小键盘与 Cmd/Ctrl 组合继续 scancode（同字符不双发）；KI-023 修饰键清扫全保留。
+- **状态**：代码完成 + 单测全绿；**GUI 真机门槛（中文直输 + 候选窗）待用户验证**。
+
+## KI-030 — 「Couldn't reach this Jetson」无法区分失败阶段 + 编译期外部隧道残留（已修复，0.3.3）
+
+- **症状**：任何隧道/回环/认证失败都显示同一句错误；历史上 `VITE_JR_SSH_PORT` 编译进旧 binary 后 unset 不生效导致多设备路由错乱。
+- **修复（v0.3.3）**：编译期 `option_env!` 路由删除，改运行时 `JR_EXTERNAL_SSH_PORT`（dev-only 显式单设备调试模式；release 永远 Internal 多隧道）；启动打印 `tunnel mode=`。`TunnelError` 细分 6 类 stable code + russh 回环单独 `LOOPBACK_SSH_FAILED`；前端优先展示后端 detail。`TunnelManager.ensure` 补脱敏 trace，key-vs-target 决策抽出 `classify_ensure` 纯函数加多设备单测。
+- **真机 trace 实证（2026-09-04，docs/P0A_TRACE_*.md）**：多设备后端不变量全部 PASS——B 后连拿首选端口，A 掉线后 32 次重连每次规划新临时端口且从不 kill/replace B；两隧道进程与两份独立凭据目录并存。原始「第二台连不上」在本环境定位为**目标设备当时真实不可达**（非身份/端口合并 bug）。
+- **状态**：✅ 已修复；新二进制可区分设备不可达 / 认证失败 / 本地端口 / ssh 退出 / 回环。
+
+## KI-031 — bootstrap 不支持 Ubuntu 20.04 / JetPack 5.x（已修复，0.3.3）
+
+- **症状**：JetPack 5.x（Ubuntu 20.04，如 Orin NX J401）provision 时 `exit 2 unsupported_os=20.04`。
+- **修复**：`bootstrap.sh` 版本分支加入 `20.04`（xrdp 0.9.12 / xorgxrdp 0.2.12 / xfce4 4.14 均在 focal 源；配置/自愈逻辑与 22.04 一致）。
+- **真机验证（100.72.12.62 / Orin NX J401 / JP 5.1.3）**：bootstrap 一次通过 → `ready=true`；`embedded_rdp_probe` 实测出真实桌面帧（1280x720、nnz=4096/4096、on_frame 持续刷新）。
+- **状态**：✅ 已修复并真机验证。
+
+## KI-032 — FreeRDP 3.31 证书 TOFU「接受」= 必须能写 ~/.config/freerdp/server/（排查结论，非 bug）
+
+- **排查**：probe 曾报 `certificate not trusted` 且 `verify_cert` 已返回 1。对照 FreeRDP 3.31.0 源码：`accept_certificate=1` 时 `verification_status = certificate_store_save_data(...) ? 1 : -1` ——「接受并存储」要求**写盘** `~/.config/freerdp/server/<host>_<port>.pem`，写失败即回退为拒绝。该 probe 在受限沙箱写不了该目录导致误报；换可写目录后接受→存储→连接→出帧全部正常。
+- **结论**：App 证书代码与 FreeRDP 3.31 语义一致，无需修改。多设备临时端口下每设备累积多条 `<host>_<port>.pem`（KI-022 已知边界）。
+- **状态**：✅ 排查完毕，无代码变更（记录防复发误判）。

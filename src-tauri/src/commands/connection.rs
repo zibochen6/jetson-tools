@@ -83,6 +83,23 @@ impl ProbeError {
             detail: None,
         }
     }
+
+    /// Same as [`ProbeError::new`] but ships a sanitized DEV diagnostic that
+    /// the frontend surfaces verbatim (phase/code, never credentials).
+    pub(crate) fn with_detail(
+        code: ProbeErrorCode,
+        message: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let message = message.into();
+        let detail = detail.into();
+        eprintln!("[jr-flow] ipc error {code:?}: {message} ({detail})");
+        Self {
+            code,
+            message,
+            detail: Some(detail),
+        }
+    }
 }
 
 /// Map remembered-device failures into typed IPC errors. `Missing` is the only
@@ -234,31 +251,42 @@ pub async fn probe_device(
 
 fn map_ssh_error(e: SshError) -> ProbeError {
     match e {
-        SshError::Timeout => ProbeError::new(ProbeErrorCode::SshTimeout, "SSH connect timed out"),
+        SshError::Timeout => ProbeError::with_detail(
+            ProbeErrorCode::SshTimeout,
+            "SSH connect timed out",
+            "LOOPBACK_SSH_TIMEOUT: ssh control plane over 127.0.0.1 timed out",
+        ),
         SshError::Connect(err) => {
             // Password-only control plane: a russh transport error carrying an
             // auth-related server message (e.g. "Authentication failure,
             // remaining methods: publickey") is an auth failure, not a network
             // problem. Mapped to AuthenticationFailed so the UI never sees a
             // PublicKey-only hint.
-            let detail = err.to_string().to_lowercase();
-            if detail.contains("permission denied")
-                || detail.contains("authentication")
-                || detail.contains("auth ")
+            let low = err.to_string().to_lowercase();
+            if low.contains("permission denied")
+                || low.contains("authentication")
+                || low.contains("auth ")
             {
-                return ProbeError::new(
+                return ProbeError::with_detail(
                     ProbeErrorCode::AuthenticationFailed,
                     "Authentication failed",
+                    "SSH_AUTH_FAILED",
                 );
             }
-            ProbeError::new(
+            // The SSH control plane ALWAYS dials the in-app loopback tunnel
+            // (`127.0.0.1:<port>`); a transport-level refusal here is a loopback
+            // failure, not a LAN reachability problem (the tunnel is where the
+            // LAN leg lives). Distinct from the TUNNEL_* codes below.
+            ProbeError::with_detail(
                 ProbeErrorCode::ConnectionRefused,
                 "Could not reach the device",
+                format!("LOOPBACK_SSH_FAILED: {}", err),
             )
         }
-        SshError::AuthRejected => ProbeError::new(
+        SshError::AuthRejected => ProbeError::with_detail(
             ProbeErrorCode::AuthenticationFailed,
             "Authentication failed",
+            "SSH_AUTH_FAILED",
         ),
         SshError::CommandFailed(code) => ProbeError::new(
             ProbeErrorCode::RemoteCommandFailed,
@@ -282,17 +310,41 @@ fn map_detect_error(e: DetectError) -> ProbeError {
 }
 
 fn map_tunnel_error(e: TunnelError) -> ProbeError {
+    // Every tunnel failure carries its stable TUNNEL_* code in `detail` so the
+    // DEV build can distinguish the exact phase (§7); `message` stays concise
+    // for release users.
+    let code = e.code();
     match e {
-        TunnelError::AuthFailed => ProbeError::new(
+        TunnelError::ExternalSingleDevice => ProbeError::with_detail(
+            ProbeErrorCode::Unknown,
+            "This build uses a single-device external tunnel",
+            code,
+        ),
+        TunnelError::AuthFailed => ProbeError::with_detail(
             ProbeErrorCode::AuthenticationFailed,
             "Authentication failed",
+            code,
         ),
-        TunnelError::Unreachable => {
-            ProbeError::new(ProbeErrorCode::SshTimeout, "Could not reach the device")
-        }
-        TunnelError::Setup(m) => {
-            ProbeError::new(ProbeErrorCode::Unknown, format!("Secure tunnel: {m}"))
-        }
+        TunnelError::Unreachable => ProbeError::with_detail(
+            ProbeErrorCode::SshTimeout,
+            "Could not reach the device",
+            code,
+        ),
+        TunnelError::LocalPort(m) => ProbeError::with_detail(
+            ProbeErrorCode::Unknown,
+            "Secure tunnel could not be established",
+            format!("{code}: {m}"),
+        ),
+        TunnelError::SshExited(m) => ProbeError::with_detail(
+            ProbeErrorCode::Unknown,
+            "Secure tunnel could not be established",
+            format!("{code}: {m}"),
+        ),
+        TunnelError::Setup(m) => ProbeError::with_detail(
+            ProbeErrorCode::Unknown,
+            "Secure tunnel could not be established",
+            format!("{code}: {m}"),
+        ),
     }
 }
 

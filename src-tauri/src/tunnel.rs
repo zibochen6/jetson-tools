@@ -51,14 +51,55 @@ pub struct TunnelEndpoints {
     pub rdp_port: u16,
 }
 
+/// How tunnels are routed in this process.
+///
+/// `Internal` (the release default) lets [`TunnelManager`] spawn one loopback
+/// tunnel per remote DEVICE. `External` is an explicit single-device DEV debug
+/// mode: a manually managed `ssh -L` tunnel is reused, and a second device
+/// identity is rejected with `TUNNEL_EXTERNAL_SINGLE_DEVICE` instead of being
+/// silently routed to the same Jetson.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelMode {
+    Internal,
+    External { ssh_port: u16, rdp_port: u16 },
+}
+
+/// Legacy compile-time override detection (transition safety only). If a stale
+/// binary still has `VITE_JR_SSH_PORT` baked in, we must say so loudly rather
+/// than silently routing through a single external tunnel; the routing itself
+/// no longer reads it (see [`tunnel_mode`]).
+const LEGACY_COMPILED_EXTERNAL: Option<&str> = option_env!("VITE_JR_SSH_PORT");
+
 #[derive(Debug, thiserror::Error)]
 pub enum TunnelError {
+    #[error("the external tunnel supports a single device only")]
+    ExternalSingleDevice,
     #[error("could not reach the device")]
     Unreachable,
     #[error("authentication failed")]
     AuthFailed,
+    #[error("local port allocation failed: {0}")]
+    LocalPort(String),
+    #[error("ssh tunnel exited: {0}")]
+    SshExited(String),
     #[error("tunnel setup failed: {0}")]
     Setup(String),
+}
+
+impl TunnelError {
+    /// Stable machine-readable classification for DEV diagnostics. Never
+    /// contains credentials (the sanitized ssh stderr / port strings are the
+    /// only dynamic parts). Callers may surface this verbatim.
+    pub fn code(&self) -> &'static str {
+        match self {
+            TunnelError::ExternalSingleDevice => "TUNNEL_EXTERNAL_SINGLE_DEVICE",
+            TunnelError::Unreachable => "TUNNEL_TARGET_UNREACHABLE",
+            TunnelError::AuthFailed => "TUNNEL_AUTH_FAILED",
+            TunnelError::LocalPort(_) => "TUNNEL_LOCAL_PORT_FAILED",
+            TunnelError::SshExited(_) => "TUNNEL_SSH_EXITED",
+            TunnelError::Setup(_) => "TUNNEL_SETUP_FAILED",
+        }
+    }
 }
 
 /// The remote board a tunnel terminates at. Two keys addressing the same
@@ -117,12 +158,25 @@ pub struct TunnelManager {
     inner: Arc<Mutex<TunnelState>>,
 }
 
-
 impl TunnelManager {
     pub fn new() -> Self {
         if let Some(root) = default_tunnel_root() {
             sweep_orphans(&root.join("known_hosts"));
             cleanup_stale_secret_dirs(&root);
+        }
+        // One-time diagnostic banner (never prints credentials): which mode is
+        // this process in? A stale binary that still bakes in the legacy
+        // compile-time override is reported loudly so it gets rebuilt.
+        match tunnel_mode() {
+            TunnelMode::Internal => eprintln!("[jr-flow] tunnel mode=internal"),
+            TunnelMode::External { ssh_port, rdp_port } => {
+                eprintln!("[jr-flow] tunnel mode=external ssh_port={ssh_port} rdp_port={rdp_port}");
+            }
+        }
+        if let Some(legacy) = LEGACY_COMPILED_EXTERNAL {
+            eprintln!(
+                "[jr-flow] WARNING legacy compile-time VITE_JR_SSH_PORT={legacy} is baked into this binary; rebuild clean — the runtime override is JR_EXTERNAL_SSH_PORT"
+            );
         }
         Self::default()
     }
@@ -152,11 +206,24 @@ impl TunnelManager {
         let key = device_key.to_string();
 
         // Dev override: a manually managed external tunnel can represent only
-        // one remote target. Reject a second identity instead of silently
-        // routing two device tabs to the same Jetson.
-        if let Some((ssh, rdp)) = external_tunnel_ports() {
+        // one remote target. Reject a second identity explicitly instead of
+        // silently routing two device tabs to the same Jetson.
+        if let Some((ssh, rdp)) = runtime_external_ports() {
             let mut guard = self.inner.lock().unwrap();
-            bind_external_target(&mut guard.external_target, &key)?;
+            eprintln!(
+                "[jr-flow] tunnel ensure mode=external key={key} host={host} user={username} bound={}",
+                guard.external_target.as_deref().unwrap_or("<none>")
+            );
+            match bind_external_target(&mut guard.external_target, &key) {
+                Ok(()) => {}
+                Err(TunnelError::ExternalSingleDevice) => {
+                    eprintln!(
+                        "[jr-flow] tunnel ensure result=rejected EXTERNAL_TUNNEL_SINGLE_DEVICE key={key}"
+                    );
+                    return Err(TunnelError::ExternalSingleDevice);
+                }
+                Err(e) => return Err(e),
+            }
             return Ok(TunnelEndpoints {
                 host: "127.0.0.1".into(),
                 ssh_port: ssh,
@@ -164,53 +231,67 @@ impl TunnelManager {
             });
         }
 
-        let mut guard = self.inner.lock().unwrap();
-        if let Some(t) = guard.active.get_mut(&key) {
-            if is_healthy(t) {
-                eprintln!(
-                    "[jr-flow] tunnel reuse {}:{} / {}:{}",
-                    t.endpoints.host, t.endpoints.ssh_port, t.endpoints.host, t.endpoints.rdp_port
-                );
-                return Ok(t.endpoints.clone());
-            }
-            // Stale tunnel for this device: drop kills the child + files;
-            // tunnels to OTHER devices are untouched (multi-device, V0.4).
-            guard.active.remove(&key);
-        }
-
-        // Identity adoption: a healthy tunnel to the SAME board may live under
-        // a different key (first connect keyed `user@host` before the
-        // machine-id was known; this call carries `user@deviceId`). Re-key it
-        // instead of spawning a second ssh to one device.
         let target = TunnelTarget {
             host: host.to_string(),
             port: remote_ssh_port,
             username: username.to_string(),
         };
-        let adopt_key = guard
+        let mut guard = self.inner.lock().unwrap();
+        eprintln!(
+            "[jr-flow] tunnel ensure key={key} target={host}:{remote_ssh_port} user={username} existing={}",
+            guard.active.len()
+        );
+        // Pure decision (no health checks / spawn) — kept separate so the
+        // key-vs-target adoption rules are unit-testable without ssh.
+        let targets: HashMap<String, TunnelTarget> = guard
             .active
             .iter()
-            .find(|(_, t)| t.target == target)
-            .map(|(k, _)| k.clone());
-        if let Some(old_key) = adopt_key {
-            if let Some(mut t) = guard.active.remove(&old_key) {
-                if is_healthy(&mut t) {
-                    eprintln!("[jr-flow] tunnel adopt {old_key} -> {key}");
-                    let endpoints = t.endpoints.clone();
-                    guard.active.insert(key, t);
-                    return Ok(endpoints);
+            .map(|(k, t)| (k.clone(), t.target.clone()))
+            .collect();
+        match classify_ensure(&targets, &key, &target) {
+            EnsureClass::Reuse => {
+                let t = guard.active.get_mut(&key).expect("classify said reuse");
+                if is_healthy(t) {
+                    eprintln!(
+                        "[jr-flow] tunnel ensure result=reused ssh={} rdp={}",
+                        t.endpoints.ssh_port, t.endpoints.rdp_port
+                    );
+                    return Ok(t.endpoints.clone());
                 }
-                // Unhealthy: the drop above killed the child; spawn fresh.
+                // Stale tunnel for this device: drop kills the child + files;
+                // tunnels to OTHER devices are untouched (multi-device).
+                eprintln!("[jr-flow] tunnel ensure result=stale key={key}");
+                guard.active.remove(&key);
             }
+            EnsureClass::Adopt { old_key } => {
+                // Identity adoption: a healthy tunnel to the SAME board may
+                // live under a different key (first connect keyed `user@host`
+                // before the serial was known; this call carries
+                // `user@deviceId`). Re-key it instead of spawning a second ssh.
+                if let Some(mut t) = guard.active.remove(&old_key) {
+                    if is_healthy(&mut t) {
+                        eprintln!(
+                            "[jr-flow] tunnel ensure result=adopted {old_key}->{key} ssh={} rdp={}",
+                            t.endpoints.ssh_port, t.endpoints.rdp_port
+                        );
+                        let endpoints = t.endpoints.clone();
+                        guard.active.insert(key, t);
+                        return Ok(endpoints);
+                    }
+                    // Unhealthy: the drop above killed the child; spawn fresh.
+                }
+            }
+            EnsureClass::Fresh => {}
         }
 
-        eprintln!(
-            "[jr-flow] tunnel spawn key={key} host={host} user={username}"
-        );
+        eprintln!("[jr-flow] tunnel ensure result=spawning key={key} host={host} user={username}");
         let tunnel = spawn_tunnel(app, host, remote_ssh_port, username, password).map_err(|e| {
             // Every spawn failure lands here (pre-loop setup errors AND
             // loop exits) — the log is the only post-mortem surface.
-            eprintln!("[jr-flow] tunnel spawn failed: {e}");
+            eprintln!(
+                "[jr-flow] tunnel ensure result=failed code={}: {e}",
+                e.code()
+            );
             e
         })?;
         let endpoints = tunnel.endpoints.clone();
@@ -221,15 +302,43 @@ impl TunnelManager {
 
 fn bind_external_target(slot: &mut Option<String>, key: &str) -> Result<(), TunnelError> {
     match slot {
-        Some(existing) if existing != key => Err(TunnelError::Setup(
-            "the configured external tunnel supports one device only".into(),
-        )),
+        Some(existing) if existing != key => Err(TunnelError::ExternalSingleDevice),
         Some(_) => Ok(()),
         None => {
             *slot = Some(key.to_owned());
             Ok(())
         }
     }
+}
+
+/// Pure decision made before any health/spawn work. Unit-testable without a
+/// live ssh child or AppHandle: how `ensure` should treat `key`/`target` given
+/// the current tunnel table (key → target)?
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EnsureClass {
+    /// The key already owns a tunnel; the caller re-checks its health.
+    Reuse,
+    /// The same physical target lives under another key; the caller re-checks
+    /// health before re-keying (identity upgrade: `user@host` → `user@deviceId`).
+    Adopt { old_key: String },
+    /// No existing tunnel for this key or its exact target; spawn fresh.
+    Fresh,
+}
+
+fn classify_ensure(
+    active: &HashMap<String, TunnelTarget>,
+    key: &str,
+    target: &TunnelTarget,
+) -> EnsureClass {
+    if active.contains_key(key) {
+        return EnsureClass::Reuse;
+    }
+    if let Some((old_key, _)) = active.iter().find(|(_, t)| *t == target) {
+        return EnsureClass::Adopt {
+            old_key: old_key.clone(),
+        };
+    }
+    EnsureClass::Fresh
 }
 
 /// Kill orphaned tunnel `ssh -N` processes left behind by a previous app
@@ -275,12 +384,27 @@ fn cleanup_stale_secret_dirs(root: &Path) {
     }
 }
 
-/// Compile-time dev override: `VITE_JR_SSH_PORT=2222 cargo tauri dev` rides an
-/// externally managed tunnel exactly like the pre-0.2.1 frontend routing did.
-fn external_tunnel_ports() -> Option<(u16, u16)> {
-    let ssh: u16 = option_env!("VITE_JR_SSH_PORT")?.parse().ok()?;
-    let rdp = option_env!("VITE_JR_RDP_PORT")
-        .and_then(|v| v.parse().ok())
+/// Current tunnel routing mode for this process. Runtime-only (release never
+/// sets the env, so its default is always Internal multi-device). DEV overrides
+/// use `JR_EXTERNAL_SSH_PORT` (optional `JR_EXTERNAL_RDP_PORT`, default 3389).
+pub fn tunnel_mode() -> TunnelMode {
+    match runtime_external_ports() {
+        Some((ssh_port, rdp_port)) => TunnelMode::External { ssh_port, rdp_port },
+        None => TunnelMode::Internal,
+    }
+}
+
+/// Runtime-only DEV override: `JR_EXTERNAL_SSH_PORT=2222` rides an externally
+/// managed tunnel (the pre-0.2.1 single-tunnel debug workflow). Replaces the
+/// old compile-time `option_env!("VITE_JR_SSH_PORT")` so that merely unsetting
+/// a shell variable can never leave a stale binary in the wrong mode.
+fn runtime_external_ports() -> Option<(u16, u16)> {
+    let ssh: u16 = std::env::var("JR_EXTERNAL_SSH_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())?;
+    let rdp = std::env::var("JR_EXTERNAL_RDP_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
         .unwrap_or(PREFERRED_RDP_PORT);
     Some((ssh, rdp))
 }
@@ -310,10 +434,10 @@ fn port_free(port: u16) -> bool {
 fn free_port() -> Result<u16, TunnelError> {
     TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
         .map(|l| l.local_addr().map(|a| a.port()).unwrap_or(0))
-        .map_err(|e| TunnelError::Setup(format!("no free local port: {e}")))
+        .map_err(|e| TunnelError::LocalPort(format!("no free local port: {e}")))
         .and_then(|p| {
             if p == 0 {
-                Err(TunnelError::Setup("no free local port".into()))
+                Err(TunnelError::LocalPort("no free local port".into()))
             } else {
                 Ok(p)
             }
@@ -331,7 +455,7 @@ fn pick_ports() -> Result<(u16, u16), TunnelError> {
             return Ok((ssh, rdp));
         }
     }
-    Err(TunnelError::Setup(
+    Err(TunnelError::LocalPort(
         "could not allocate distinct local ports".into(),
     ))
 }
@@ -585,7 +709,7 @@ fn classify_exit(stderr: &str, code: Option<i32>) -> TunnelError {
         return TunnelError::Unreachable;
     }
     let first = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    TunnelError::Setup(format!(
+    TunnelError::SshExited(format!(
         "ssh exited {}{}",
         code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
         if first.is_empty() {
@@ -617,8 +741,127 @@ mod tests {
             TunnelError::Unreachable
         ));
         match classify_exit("bind [127.0.0.1]:2222: Address already in use", Some(255)) {
-            TunnelError::Setup(m) => assert!(m.contains("Address already in use")),
+            TunnelError::SshExited(m) => assert!(m.contains("Address already in use")),
             other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tunnel_error_codes_are_stable_and_distinct() {
+        assert_eq!(
+            TunnelError::ExternalSingleDevice.code(),
+            "TUNNEL_EXTERNAL_SINGLE_DEVICE"
+        );
+        assert_eq!(TunnelError::Unreachable.code(), "TUNNEL_TARGET_UNREACHABLE");
+        assert_eq!(TunnelError::AuthFailed.code(), "TUNNEL_AUTH_FAILED");
+        assert_eq!(
+            TunnelError::LocalPort("x".into()).code(),
+            "TUNNEL_LOCAL_PORT_FAILED"
+        );
+        assert_eq!(
+            TunnelError::SshExited("x".into()).code(),
+            "TUNNEL_SSH_EXITED"
+        );
+        // Distinct codes for distinct causes — never two variants sharing one.
+        let codes = [
+            TunnelError::ExternalSingleDevice.code(),
+            TunnelError::Unreachable.code(),
+            TunnelError::AuthFailed.code(),
+            TunnelError::LocalPort("x".into()).code(),
+            TunnelError::SshExited("x".into()).code(),
+        ];
+        for (i, a) in codes.iter().enumerate() {
+            for b in &codes[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn classify_ensure_multiple_devices_never_replace_each_other() {
+        // Device A and B have distinct deviceIds → distinct keys → each gets
+        // its own Fresh slot; adding B must never Reuse/Adopt A.
+        let mut active = HashMap::new();
+        active.insert(
+            "seeed@serialA".to_string(),
+            TunnelTarget {
+                host: "192.168.1.10".into(),
+                port: 22,
+                username: "seeed".into(),
+            },
+        );
+        let b = TunnelTarget {
+            host: "192.168.1.11".into(),
+            port: 22,
+            username: "seeed".into(),
+        };
+        assert_eq!(
+            classify_ensure(&active, "seeed@serialB", &b),
+            EnsureClass::Fresh
+        );
+        // A remains untouched (the caller only mutates under `Fresh`).
+        assert_eq!(active.len(), 1);
+        assert!(active.contains_key("seeed@serialA"));
+    }
+
+    #[test]
+    fn classify_ensure_reuses_same_key_and_adopts_same_target() {
+        let mut active = HashMap::new();
+        let target = TunnelTarget {
+            host: "192.168.1.10".into(),
+            port: 22,
+            username: "seeed".into(),
+        };
+        active.insert("seeed@192.168.1.10".to_string(), target.clone());
+
+        // Same key → reuse (health re-checked by caller).
+        assert_eq!(
+            classify_ensure(&active, "seeed@192.168.1.10", &target),
+            EnsureClass::Reuse
+        );
+        // Same physical target under a NEW key (`user@host` → `user@serial`)
+        // → adoption, never a second tunnel to one board.
+        assert_eq!(
+            classify_ensure(&active, "seeed@serialA", &target),
+            EnsureClass::Adopt {
+                old_key: "seeed@192.168.1.10".into()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_ensure_distinct_targets_never_adopt() {
+        let mut active = HashMap::new();
+        active.insert(
+            "seeed@serialA".to_string(),
+            TunnelTarget {
+                host: "192.168.1.10".into(),
+                port: 22,
+                username: "seeed".into(),
+            },
+        );
+        // Different host, different port, different username → all Fresh.
+        for target in [
+            TunnelTarget {
+                host: "192.168.1.11".into(),
+                port: 22,
+                username: "seeed".into(),
+            },
+            TunnelTarget {
+                host: "192.168.1.10".into(),
+                port: 2222,
+                username: "seeed".into(),
+            },
+            TunnelTarget {
+                host: "192.168.1.10".into(),
+                port: 22,
+                username: "root".into(),
+            },
+        ] {
+            assert_eq!(
+                classify_ensure(&active, "seeed@serialB", &target),
+                EnsureClass::Fresh
+            );
         }
     }
 

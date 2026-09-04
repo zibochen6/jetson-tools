@@ -75,20 +75,15 @@ extern "C" {
         h: *mut c_int,
         stride: *mut c_int,
     ) -> c_int;
-    pub fn jr_session_send_mouse_move(
-        s: *mut jr_session,
-        x: c_int,
-        y: c_int,
-        buttons: c_int,
-    ) -> c_int;
-    pub fn jr_session_send_mouse_button(
+    pub fn jr_session_enqueue_mouse_move(s: *mut jr_session, x: c_int, y: c_int) -> c_int;
+    pub fn jr_session_enqueue_mouse_button(
         s: *mut jr_session,
         button: c_int,
         down: c_int,
         x: c_int,
         y: c_int,
     ) -> c_int;
-    pub fn jr_session_send_mouse_wheel(
+    pub fn jr_session_enqueue_mouse_wheel(
         s: *mut jr_session,
         delta: c_int,
         negative: c_int,
@@ -97,13 +92,20 @@ extern "C" {
         x: c_int,
         y: c_int,
     ) -> c_int;
-    pub fn jr_session_send_key_scancode(
+    pub fn jr_session_enqueue_key_scancode(
         s: *mut jr_session,
         down: c_int,
         repeat: c_int,
         scancode: c_int,
         extended: c_int,
     ) -> c_int;
+    pub fn jr_session_enqueue_unicode_text(s: *mut jr_session, utf8: *const c_char) -> c_int;
+    pub fn jr_session_enqueue_local_clipboard_text(
+        s: *mut jr_session,
+        utf8: *const c_char,
+    ) -> c_int;
+    pub fn jr_session_enqueue_resize(s: *mut jr_session, w: c_int, h: c_int) -> c_int;
+    pub fn jr_session_enqueue_reset_modifiers(s: *mut jr_session) -> c_int;
     pub fn jr_session_set_size(s: *mut jr_session, w: c_int, h: c_int) -> c_int;
     pub fn jr_last_error(s: *mut jr_session) -> *const c_char;
 
@@ -122,7 +124,6 @@ extern "C" {
     pub fn jr_view_attach_input(view: *mut c_void, session: *mut c_void);
     pub fn jr_window_content_size(ns_window: *mut c_void, w: *mut c_double, h: *mut c_double);
     pub fn jr_window_safe_area_top(ns_window: *mut c_void) -> c_double;
-    pub fn jr_session_set_clipboard_text(s: *mut jr_session, utf8: *const c_char) -> c_int;
     pub fn jr_clipboard_sync_start(session: *mut c_void);
     pub fn jr_clipboard_sync_stop();
     pub fn jr_view_present_buffer(

@@ -98,7 +98,11 @@ pub async fn launch_remote_desktop(
     let app2 = app.clone();
     let host = request.host.clone();
     let username = request.username.clone();
-    let device_key = device_key(&request.host, request.device_id.as_deref(), &request.username);
+    let device_key = device_key(
+        &request.host,
+        request.device_id.as_deref(),
+        &request.username,
+    );
     let endpoints = tokio::task::spawn_blocking(move || {
         manager.ensure(
             &app2,
@@ -205,7 +209,11 @@ async fn prepare_request(
     let app2 = app.clone();
     let host = request.host.clone();
     let username = request.username.clone();
-    let device_key = device_key(&request.host, request.device_id.as_deref(), &request.username);
+    let device_key = device_key(
+        &request.host,
+        request.device_id.as_deref(),
+        &request.username,
+    );
     let endpoints = tokio::task::spawn_blocking(move || {
         manager.ensure(
             &app2,
@@ -507,16 +515,23 @@ pub fn all_session_statuses(embedded: State<'_, RdpSessionManager>) -> Vec<Sessi
 
 fn map_tunnel_rdp_error(e: TunnelError) -> RdpIpcError {
     use crate::rdp::error::RdpErrorCode;
+    let code = e.code();
     let (code, message) = match e {
+        TunnelError::ExternalSingleDevice => (
+            RdpErrorCode::RdpUnknown,
+            format!("{code}: single-device external tunnel"),
+        ),
         TunnelError::AuthFailed => (
             RdpErrorCode::RdpAuthenticationFailed,
-            "Authentication failed".to_string(),
+            format!("{code}: Authentication failed"),
         ),
         TunnelError::Unreachable => (
             RdpErrorCode::RdpConnectionFailed,
-            "Could not reach the device".to_string(),
+            format!("{code}: Could not reach the device"),
         ),
-        TunnelError::Setup(m) => (RdpErrorCode::RdpUnknown, format!("Secure tunnel: {m}")),
+        TunnelError::LocalPort(m) => (RdpErrorCode::RdpUnknown, format!("{code}: {m}")),
+        TunnelError::SshExited(m) => (RdpErrorCode::RdpUnknown, format!("{code}: {m}")),
+        TunnelError::Setup(m) => (RdpErrorCode::RdpUnknown, format!("{code}: {m}")),
     };
     RdpIpcError { code, message }
 }

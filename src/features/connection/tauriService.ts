@@ -96,11 +96,12 @@ type RustPrepareResult =
   | { kind: "hostKeyChanged"; current: HostKeyInfo; previous: HostKeyInfo };
 
 function mapError(err: unknown): ConnectionFailure {
-  const e = (err as { code?: IpcErrorCode; message?: string } | null) ?? {};
+  const e = (err as { code?: IpcErrorCode; message?: string; detail?: string } | null) ?? {};
   const mapped = (e.code && CODE_MAP[e.code]) || "unknown";
-  // Surface the backend's technical reason (never the password) so the error
-  // screen can tell "unreachable" from "auth" from "sudo" at a glance.
-  return new ConnectionFailure(mapped, e.message);
+  // Surface the backend's granular DEV diagnostic (TUNNEL_*/LOOPBACK_SSH_*)
+  // when present; otherwise the concise product message. Both are sanitized
+  // and never contain credentials.
+  return new ConnectionFailure(mapped, e.detail ?? e.message);
 }
 
 function abortied(): Error & { name: "AbortError" } {

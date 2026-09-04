@@ -9,6 +9,12 @@ pub mod trust;
 pub mod tunnel;
 pub mod updater;
 
+#[cfg(test)]
+mod queue_ffi_tests;
+
+#[cfg(test)]
+mod clipboard_ffi_tests;
+
 use tauri::Manager;
 
 /// Release builds launched from Finder/`open` have no terminal: stderr (all

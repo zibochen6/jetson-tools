@@ -20,15 +20,22 @@ fn main() {
         .expect("native/freerdp_bridge must exist");
     let bridge_c = native.join("bridge.c");
     let bridge_h = native.join("bridge.h");
+    let queue_c = native.join("queue.c");
+    let queue_h = native.join("queue.h");
     let macos_view_m = native.join("macos_view.m");
-    // The header isn't a compiled input, so track its changes explicitly.
+    // The headers aren't compiled inputs, so track their changes explicitly.
     println!("cargo:rerun-if-changed={}", bridge_h.display());
     println!("cargo:rerun-if-changed={}", bridge_c.display());
+    println!("cargo:rerun-if-changed={}", queue_h.display());
+    println!("cargo:rerun-if-changed={}", queue_c.display());
     println!("cargo:rerun-if-changed={}", macos_view_m.display());
 
-    // C bridge (session protocol) — no ARC.
+    // C bridge (session protocol) — no ARC. The command queue is compiled into
+    // the same static lib so it is both linked into the app and callable from
+    // Rust `#[test]`s (pure C, no FreeRDP headers in queue.c).
     let mut bridge = cc::Build::new();
     bridge.file(&bridge_c);
+    bridge.file(&queue_c);
     bridge.flag("-Wno-deprecated-declarations");
     bridge.flag("-Wno-unused-parameter");
     for inc in &includes {

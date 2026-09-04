@@ -7,6 +7,7 @@
  */
 
 #include "bridge.h"
+#include "queue.h"
 
 #include <freerdp/freerdp.h>
 #include <freerdp/client.h>
@@ -43,7 +44,21 @@
 #endif
 
 static void jr_clip_wire(jr_session_t* s);
+static void jr_clip_announce(jr_session_t* s);
+static char* jr_clip_snapshot(jr_session_t* s);
 static void jr_on_channel_connected(void* context, const ChannelConnectedEventArgs* e);
+
+/* Single-owner input dispatch: the worker thread is the ONLY thread allowed
+ * to touch the FreeRDP input/CLIPRDR APIs (KI-018 / single-owner rule). The
+ * AppKit main thread only enqueues through `jr_session_enqueue_*`. */
+static void jr_send_mouse_move(jr_session_t* s, int x, int y);
+static void jr_send_mouse_button(jr_session_t* s, int button, int down, int x, int y);
+static void jr_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta, int hnegative,
+                                int x, int y);
+static void jr_send_key_scancode(jr_session_t* s, int down, int repeat, int scancode, int extended);
+static void jr_send_unicode_text(jr_session_t* s, const char* utf8);
+static void jr_send_reset_modifiers(jr_session_t* s);
+static void jr_dispatch_cmd(jr_cmd* c, void* user);
 
 /* Custom context: the rdpContext is embedded at offset 0 via rdpClientContext,
  * so a `jr_context_t*` is address-identical to the `rdpContext*`. */
@@ -70,6 +85,11 @@ struct jr_session
 	volatile int disconnecting;
 	int started;
 	int frame_count;
+
+	/* Single-owner command queue (KI-018 / §12): AppKit main thread only
+	 * ENQUEUES; the RDP worker thread drains and calls the FreeRDP APIs. */
+	jr_cmd_queue* cmdq;
+	HANDLE cmd_wake; /* WinPR auto-reset event; SetEvent after enqueue */
 
 	freerdp* instance;
 	rdpContext* context;
@@ -443,7 +463,7 @@ static BOOL jr_post_connect(freerdp* instance)
 	 * (KI-023: macOS swallows the flagsChanged of a Cmd released while the
 	 * app was inactive — Cmd+Tab / Cmd+Q / Spotlight). See the regression
 	 * guide §2.4 before touching this. */
-	jr_session_reset_keyboard_modifiers(s);
+	jr_send_reset_modifiers(s);
 
 	if (s->cb.on_connected)
 		s->cb.on_connected(s->cb.user);
@@ -507,6 +527,9 @@ jr_session_t* jr_session_create(const jr_connect_params_t* params,
 	if (!s)
 		return NULL;
 
+	/* Init the lock up-front so the `fail` path can always Delete it. */
+	InitializeCriticalSection(&s->clip_lock);
+
 	s->certificate_name = strdup(params->certificate_name);
 	s->host = strdup(params->host);
 	s->username = strdup(params->username);
@@ -537,7 +560,16 @@ jr_session_t* jr_session_create(const jr_connect_params_t* params,
 	s->context = ctx;
 	s->instance = ctx->instance;
 	((jr_context_t*)ctx)->session = s;
-	InitializeCriticalSection(&s->clip_lock);
+
+	/* Per-session command queue + wake event. Must exist before the view
+	 * attaches input (attachInput enqueues a modifier reset immediately).
+	 * MANUAL-RESET event: WinPR's CreateEventA does not implement auto-reset
+	 * events (observed at runtime), so the worker ResetEvent()s it each loop
+	 * iteration before draining. */
+	s->cmdq = jr_cmdq_create();
+	s->cmd_wake = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!s->cmdq || !s->cmd_wake)
+		goto fail;
 	return s;
 
 fail:
@@ -562,6 +594,13 @@ void jr_session_destroy(jr_session_t* s)
 	free(s->username);
 	free(s->password);
 	free(s->clip_text);
+	jr_cmdq_destroy(s->cmdq);
+	s->cmdq = NULL;
+	if (s->cmd_wake)
+	{
+		CloseHandle(s->cmd_wake);
+		s->cmd_wake = NULL;
+	}
 	DeleteCriticalSection(&s->clip_lock);
 	free(s);
 }
@@ -571,7 +610,7 @@ static int jr_run_loop(jr_session_t* s)
 	freerdp* instance = s->instance;
 	rdpContext* context = s->context;
 	BOOL rc;
-	HANDLE handles[JR_MAX_HANDLES];
+	HANDLE handles[JR_MAX_HANDLES + 1]; /* +1 for the command wake event */
 	DWORD nCount;
 	DWORD status;
 
@@ -586,6 +625,15 @@ static int jr_run_loop(jr_session_t* s)
 
 	while (!freerdp_shall_disconnect_context(context) && !s->disconnecting)
 	{
+		/* Manual-reset wake: clear BEFORE draining so an enqueue that lands
+		 * during the drain re-signals the event and the next iteration wakes
+		 * immediately (no lost wake, no busy-spin). */
+		ResetEvent(s->cmd_wake);
+
+		/* Drain pending input/clipboard/resize commands FIRST. This is the
+		 * only place FreeRDP input APIs are called (single-owner rule). */
+		jr_cmdq_drain(s->cmdq, jr_dispatch_cmd, s);
+
 		ZeroMemory(handles, sizeof(handles));
 		nCount = freerdp_get_event_handles(context, handles, JR_MAX_HANDLES);
 		if (nCount == 0)
@@ -593,10 +641,13 @@ static int jr_run_loop(jr_session_t* s)
 			jr_set_error(s, "freerdp_get_event_handles failed");
 			break;
 		}
+		/* Append the command wake event so an enqueue from the main thread
+		 * wakes the loop immediately instead of waiting out the 33ms tick. */
+		handles[nCount] = s->cmd_wake;
 		/* RDPGFX can update the GDI primary buffer without Update.EndPaint.
 		 * A short event-loop timeout gives the native surface a bounded-latency
 		 * presentation tick for that path without a second reader thread. */
-		status = WaitForMultipleObjects(nCount, handles, FALSE, 33);
+		status = WaitForMultipleObjects(nCount + 1, handles, FALSE, 33);
 		if (status == WAIT_TIMEOUT)
 		{
 			jr_emit_frame(s, context->gdi);
@@ -607,6 +658,10 @@ static int jr_run_loop(jr_session_t* s)
 			jr_set_error(s, "WaitForMultipleObjects failed");
 			break;
 		}
+		/* Our wake event fired (status == WAIT_OBJECT_0 + nCount): nothing to
+		 * do here — the drained queue is emptied at the top of the next
+		 * iteration. FreeRDP handles are checked the same either way, which is
+		 * a no-op (returns TRUE) when only the command event was signaled. */
 		if (!freerdp_check_event_handles(context))
 		{
 			if (freerdp_get_last_error(context) == FREERDP_ERROR_SUCCESS)
@@ -691,24 +746,26 @@ int jr_session_get_framebuffer(jr_session_t* s, const uint8_t** buffer, int* wid
 	return 0;
 }
 
-int jr_session_send_mouse_move(jr_session_t* s, int x, int y, int buttons)
+/* ---- worker-only send helpers (single-owner rule) ------------------- */
+
+static void jr_send_mouse_move(jr_session_t* s, int x, int y)
 {
 	UINT16 flags = PTR_FLAGS_MOVE;
-	/* xrdp state machine: motion events must NEVER carry held-button bits
-	 * (BUTTONn without DOWN is parsed as a button RELEASE, see xrdp_wm.c
-	 * xrdp_wm_process_input_mouse). Held state lives in the server side. */
-	(void)buttons;
+	/* CONTRACT (KI-018, regression guide §2.1): a drag is PURE PTR_FLAGS_MOVE
+	 * — motion events must NEVER carry held-button bits (a BUTTONn without
+	 * DOWN is parsed by xrdp as a button RELEASE, not a move; see xrdp_wm.c
+	 * xrdp_wm_process_input_mouse). Held state lives on the server side.
+	 * DO NOT change this to "BUTTON1|MOVE": doing so breaks window dragging. */
 	if (!s || !s->context || !s->gdi)
-		return -1;
-	return freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y) ? 0
-	                                                                                       : -1;
+		return;
+	(void)freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y);
 }
 
-int jr_session_send_mouse_button(jr_session_t* s, int button, int down, int x, int y)
+static void jr_send_mouse_button(jr_session_t* s, int button, int down, int x, int y)
 {
 	UINT16 flags = 0;
 	if (!s || !s->context || !s->gdi)
-		return -1;
+		return;
 	switch (button)
 	{
 		case 2:
@@ -726,23 +783,24 @@ int jr_session_send_mouse_button(jr_session_t* s, int button, int down, int x, i
 		flags |= PTR_FLAGS_DOWN;
 		flags |= PTR_FLAGS_MOVE; /* update position before the press lands */
 	}
-	return freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y) ? 0
-	                                                                                       : -1;
+	/* release = BUTTONn WITHOUT DOWN (and without MOVE): xrdp keeps the held
+	 * state itself and treats a button-bit drop as the release. */
+	(void)freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y);
 }
 
-int jr_session_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta,
-                                int hnegative, int x, int y)
+static void jr_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta, int hnegative,
+                                int x, int y)
 {
 	UINT16 flags;
 	if (!s || !s->context || !s->gdi)
-		return -1;
+		return;
 	if (delta > 0)
 	{
 		flags = PTR_FLAGS_WHEEL | (UINT16)(delta & WheelRotationMask);
 		if (negative)
 			flags |= PTR_FLAGS_WHEEL_NEGATIVE;
 		if (!freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y))
-			return -1;
+			return;
 	}
 	if (hdelta > 0)
 	{
@@ -750,17 +808,15 @@ int jr_session_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hd
 		if (hnegative)
 			flags |= PTR_FLAGS_WHEEL_NEGATIVE;
 		if (!freerdp_input_send_mouse_event(s->context->input, flags, (UINT16)x, (UINT16)y))
-			return -1;
+			return;
 	}
-	return 0;
 }
 
-int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scancode,
-                                 int extended)
+static void jr_send_key_scancode(jr_session_t* s, int down, int repeat, int scancode, int extended)
 {
 	UINT16 flags = 0;
 	if (!s || !s->context || !s->gdi)
-		return -1;
+		return;
 	/* FreeRDP 3: absence of RELEASE = press; DOWN marks an autorepeat. */
 	if (!down)
 		flags |= KBD_FLAGS_RELEASE;
@@ -768,7 +824,34 @@ int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scan
 		flags |= KBD_FLAGS_DOWN;
 	if (extended)
 		flags |= KBD_FLAGS_EXTENDED;
-	return freerdp_input_send_keyboard_event(s->context->input, flags, (UINT8)scancode) ? 0 : -1;
+	(void)freerdp_input_send_keyboard_event(s->context->input, flags, (UINT8)scancode);
+}
+
+/* Send committed IME text as RDP unicode keyboard input (Mac IME commit path,
+ * §22). Reuses the tested UTF-8→UTF-16LE codec: a supplementary code point
+ * (> U+FFFF) is already split into its surrogate pair, and every UTF-16 code
+ * unit is sent as press + release so XRDP/X recompose the run correctly. */
+static void jr_send_unicode_text(jr_session_t* s, const char* utf8)
+{
+	uint32_t len = 0;
+	uint8_t* buf;
+	uint32_t i;
+
+	if (!s || !s->context || !s->gdi || !utf8)
+		return;
+	buf = jr_utf8_to_utf16le(utf8, &len);
+	if (!buf)
+		return;
+	/* `len` includes the UTF-16 null terminator; iterate code units (2 bytes). */
+	for (i = 0; i + 1 < len; i += 2)
+	{
+		uint16_t unit = (uint16_t)(buf[i] | (uint16_t)(buf[i + 1] << 8));
+		if (unit == 0)
+			break;
+		(void)freerdp_input_send_unicode_keyboard_event(s->context->input, 0, unit);
+		(void)freerdp_input_send_unicode_keyboard_event(s->context->input, KBD_FLAGS_RELEASE, unit);
+	}
+	free(buf);
 }
 
 /* Release every modifier key so the remote keyboard state can never stay
@@ -778,7 +861,7 @@ int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scan
  * — the user then sees Super+E open the file manager and Super+Space eaten by
  * the input-method shortcut. Releasing a non-held key is a no-op on the
  * server, so this runs unconditionally at connect/focus/attach. */
-int jr_session_reset_keyboard_modifiers(jr_session_t* s)
+static void jr_send_reset_modifiers(jr_session_t* s)
 {
 	static const struct
 	{
@@ -795,17 +878,135 @@ int jr_session_reset_keyboard_modifiers(jr_session_t* s)
 	    {0x5C, 1}, /* RMeta   (E0)   */
 	};
 	size_t i;
-	int rc = 0;
 
 	if (!s || !s->context || !s->gdi)
-		return -1;
+		return;
 	for (i = 0; i < sizeof(kMods) / sizeof(kMods[0]); i++)
-	{
-		if (jr_session_send_key_scancode(s, 0, 0, kMods[i].sc, kMods[i].ext) != 0)
-			rc = -1;
-	}
+		jr_send_key_scancode(s, 0, 0, kMods[i].sc, kMods[i].ext);
 	fprintf(stderr, "[jr-input] keyboard modifier reset: 8 releases sent\n");
-	return rc;
+}
+
+/* Dispatch a queue command to the FreeRDP API. Runs ONLY on the worker thread
+ * (called from jr_cmdq_drain inside jr_run_loop). */
+static void jr_dispatch_cmd(jr_cmd* c, void* user)
+{
+	jr_session_t* s = (jr_session_t*)user;
+	if (!s || !c)
+		return;
+	switch (c->kind)
+	{
+		case JR_CMD_MOUSE_MOVE:
+			jr_send_mouse_move(s, c->a, c->b);
+			break;
+		case JR_CMD_MOUSE_BUTTON:
+			jr_send_mouse_button(s, c->a, c->b, c->c, c->d);
+			break;
+		case JR_CMD_MOUSE_WHEEL:
+			jr_send_mouse_wheel(s, c->a, c->b, c->c, c->d, c->e, c->f);
+			break;
+		case JR_CMD_KEY_SCANCODE:
+			jr_send_key_scancode(s, c->a, c->b, c->c, c->d);
+			break;
+		case JR_CMD_UNICODE_TEXT:
+			jr_send_unicode_text(s, c->owned_utf8);
+			break;
+		case JR_CMD_LOCAL_CLIPBOARD_TEXT:
+			jr_clip_store_text(s, c->owned_utf8);
+			jr_clip_announce(s);
+			break;
+		case JR_CMD_RESIZE:
+			jr_session_set_size(s, c->a, c->b);
+			break;
+		case JR_CMD_RESET_MODIFIERS:
+			jr_send_reset_modifiers(s);
+			break;
+		default:
+			break;
+	}
+}
+
+/* ---- public enqueue entry points (AppKit main thread) --------------- */
+
+int jr_session_enqueue_mouse_move(jr_session_t* s, int x, int y)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_move(s->cmdq, x, y);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_mouse_button(jr_session_t* s, int button, int down, int x, int y)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_button(s->cmdq, button, down, x, y);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta,
+                                   int hnegative, int x, int y)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_wheel(s->cmdq, delta, negative, hdelta, hnegative, x, y);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_key_scancode(jr_session_t* s, int down, int repeat, int scancode,
+                                    int extended)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_scancode(s->cmdq, down, repeat, scancode, extended);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_unicode_text(jr_session_t* s, const char* utf8)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_unicode(s->cmdq, utf8);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_local_clipboard_text(jr_session_t* s, const char* utf8)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_clipboard(s->cmdq, utf8);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_resize(jr_session_t* s, int w, int h)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_resize(s->cmdq, w, h);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
+}
+
+int jr_session_enqueue_reset_modifiers(jr_session_t* s)
+{
+	if (!s || !s->cmdq)
+		return -1;
+	jr_cmdq_enqueue_reset_modifiers(s->cmdq);
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -813,13 +1014,14 @@ int jr_session_reset_keyboard_modifiers(jr_session_t* s)
 /* Mac side implements jr_mac_clip_set/get in macos_view.m.            */
 /* ------------------------------------------------------------------ */
 
-void jr_mac_clip_set(const char* utf8); /* implemented in macos_view.m */
-char* jr_mac_clip_get(void);            /* malloc'd UTF-8 or NULL      */
+void jr_mac_clip_set(void* session, uint64_t generation, const char* utf8); /* macos_view.m */
+int jr_clip_is_owner(void* session);                                        /* macos_view.m */
+uint64_t jr_clip_generation(void);                                          /* macos_view.m */
 
 #define JR_CF_TEXT 1
 #define JR_CF_UNICODETEXT 13
 
-static char* jr_utf16le_to_utf8(const BYTE* data, UINT32 len)
+char* jr_utf16le_to_utf8(const uint8_t* data, uint32_t len)
 {
 	size_t cap = (size_t)len + 8;
 	char* out = (char*)malloc(cap);
@@ -874,7 +1076,7 @@ static char* jr_utf16le_to_utf8(const BYTE* data, UINT32 len)
 	return out;
 }
 
-static BYTE* jr_utf8_to_utf16le(const char* s, UINT32* out_len)
+uint8_t* jr_utf8_to_utf16le(const char* s, uint32_t* out_len)
 {
 	size_t n = strlen(s);
 	BYTE* out = (BYTE*)malloc(n * 2 + 4);
@@ -925,21 +1127,17 @@ static UINT jr_clip_server_capabilities(CliprdrClientContext* ctx, const CLIPRDR
 static UINT jr_clip_monitor_ready(CliprdrClientContext* ctx, const CLIPRDR_MONITOR_READY* mon)
 {
 	jr_session_t* s = (jr_session_t*)ctx->custom;
-	char* text;
 
 	(void)mon;
 	if (!s)
 		return 0;
-	fprintf(stderr, "[jr-clip] monitor ready -> announcing local pasteboard\n");
+	fprintf(stderr, "[jr-clip][session=%p] monitor-ready\n", (void*)s);
 	s->clip_ready = 1;
-	/* Offer whatever is currently on the Mac pasteboard so a remote paste
-	 * works without a fresh copy first. */
-	text = jr_mac_clip_get();
-	if (text)
-	{
-		jr_session_set_clipboard_text(s, text);
-		free(text);
-	}
+	/* Offer the session-owned snapshot if the initial Mac sync already stored
+	 * one (jr_clipboard_sync_start stores it thread-safely on the main thread
+	 * before the worker connects). No NSPasteboard access here. */
+	if (s->clip_text)
+		jr_clip_announce(s);
 	return 0;
 }
 
@@ -978,7 +1176,8 @@ static UINT jr_clip_server_format_data_response(CliprdrClientContext* ctx,
 	jr_session_t* s = (jr_session_t*)ctx->custom;
 	char* utf8 = NULL;
 
-	fprintf(stderr, "[jr-clip] server data response (fmt %u)\n", ctx->lastRequestedFormatId);
+	fprintf(stderr, "[jr-clip][session=%p] server data response (fmt %u)\n", (void*)s,
+	        ctx->lastRequestedFormatId);
 	if (!resp->requestedFormatData)
 		return 0;
 	if (ctx->lastRequestedFormatId == JR_CF_UNICODETEXT)
@@ -987,8 +1186,13 @@ static UINT jr_clip_server_format_data_response(CliprdrClientContext* ctx,
 		utf8 = strdup((const char*)resp->requestedFormatData);
 	if (utf8 && s)
 	{
-		fprintf(stderr, "[jr-clip] remote->mac text (%zu bytes)\n", strlen(utf8));
-		jr_mac_clip_set(utf8);
+		/* Log direction + length + session only — never the text body. */
+		fprintf(stderr, "[jr-clip][session=%p] remote-text len=%zu\n", (void*)s, strlen(utf8));
+		/* Only the currently-focused session may write the Mac pasteboard.
+		 * `jr_mac_clip_set` re-validates owner/generation on the main thread,
+		 * guarding against a delayed A callback overwriting after a tab switch. */
+		if (jr_clip_is_owner(s))
+			jr_mac_clip_set(s, jr_clip_generation(), utf8);
 	}
 	free(utf8);
 	return 0;
@@ -998,12 +1202,12 @@ static UINT jr_clip_server_format_data_request(CliprdrClientContext* ctx,
                                                const CLIPRDR_FORMAT_DATA_REQUEST* req)
 {
 	CLIPRDR_FORMAT_DATA_RESPONSE resp;
-	char* text = jr_mac_clip_get();
+	char* text = jr_clip_snapshot((jr_session_t*)ctx->custom);
 	BYTE* data = NULL;
 	UINT32 len = 0;
 
-	fprintf(stderr, "[jr-clip] server requests format %u (paste has %s)\n",
-	        req->requestedFormatId, text ? "text" : "NONE");
+	fprintf(stderr, "[jr-clip][session=%p] server-request format %u (%s)\n", (void*)ctx->custom,
+	        req->requestedFormatId, text ? "has-snapshot" : "empty");
 
 	ZeroMemory(&resp, sizeof(resp));
 	if (text && req->requestedFormatId == JR_CF_UNICODETEXT)
@@ -1113,20 +1317,21 @@ static void jr_clip_wire(jr_session_t* s)
 		fprintf(stderr, "[jr-clip] client capabilities SEND FAILED\n");
 }
 
-int jr_session_set_clipboard_text(jr_session_t* s, const char* utf8)
+/* Send a ClientFormatList announcing CF_TEXT + CF_UNICODETEXT. Worker-only
+ * (single-owner rule): never called from the AppKit main thread. As a KI-019
+ * safety net, `jr_clip_ensure` lazily (re)wires the cliprdr interface if the
+ * ChannelConnected event was missed. */
+static void jr_clip_announce(jr_session_t* s)
 {
 	CLIPRDR_FORMAT formats[2];
 	CLIPRDR_FORMAT_LIST list;
 
-	if (!s || !s->clip_ready || jr_clip_ensure(s) != 0)
-		return -1;
-	EnterCriticalSection(&s->clip_lock);
-	free(s->clip_text);
-	s->clip_text = strdup(utf8 ? utf8 : "");
-	LeaveCriticalSection(&s->clip_lock);
+	if (!s || !s->clip_ready)
+		return;
+	if (jr_clip_ensure(s) != 0)
+		return; /* channel not OPEN yet; retry on the next dispatch */
 
-	fprintf(stderr, "[jr-clip] announcing format list (mac->remote)\n");
-
+	fprintf(stderr, "[jr-clip][session=%p] format-list sent\n", (void*)s);
 	ZeroMemory(&formats, sizeof(formats));
 	formats[0].formatId = JR_CF_TEXT;
 	formats[0].formatName = NULL;
@@ -1135,7 +1340,35 @@ int jr_session_set_clipboard_text(jr_session_t* s, const char* utf8)
 	ZeroMemory(&list, sizeof(list));
 	list.numFormats = 2;
 	list.formats = formats;
-	return s->cliprdr->ClientFormatList(s->cliprdr, &list) == 0 ? 0 : -1;
+	if (s->cliprdr->ClientFormatList(s->cliprdr, &list) != 0)
+		fprintf(stderr, "[jr-clip][session=%p] ClientFormatList send failed\n", (void*)s);
+}
+
+/* Thread-safe snapshot store (no FreeRDP handshake). Safe from the AppKit main
+ * thread (initial sync in jr_clipboard_sync_start) AND from the worker
+ * (dispatch of JR_CMD_LOCAL_CLIPBOARD_TEXT). */
+int jr_clip_store_text(jr_session_t* s, const char* utf8)
+{
+	if (!s)
+		return -1;
+	EnterCriticalSection(&s->clip_lock);
+	free(s->clip_text);
+	s->clip_text = strdup(utf8 ? utf8 : "");
+	LeaveCriticalSection(&s->clip_lock);
+	return 0;
+}
+
+/* Read the session-owned clipboard snapshot (worker only; never NSPasteboard). */
+static char* jr_clip_snapshot(jr_session_t* s)
+{
+	char* out = NULL;
+	if (!s)
+		return NULL;
+	EnterCriticalSection(&s->clip_lock);
+	if (s->clip_text)
+		out = strdup(s->clip_text);
+	LeaveCriticalSection(&s->clip_lock);
+	return out;
 }
 
 int jr_session_set_size(jr_session_t* s, int width, int height)

@@ -72,34 +72,52 @@ int jr_session_disconnect(jr_session_t* s); /* thread-safe stop signal */
 int jr_session_get_size(jr_session_t* s, int* width, int* height);
 int jr_session_get_framebuffer(jr_session_t* s, const uint8_t** buffer, int* width,
                                int* height, int* stride);
-/* Input forwarding. Semantic wrappers over freerdp_input_send_* (the bridge
- * translates to the RDP pointer/keyboard flag constants); safe to call from the AppKit main
- * thread while the session worker thread runs the event loop.
- *   mouse_move:  buttons = bitmask 1=left 2=right 4=middle (held while moving)
- *   mouse_button:button 1=left 2=right 3=middle, down 1/0
- *   mouse_wheel: delta/hdelta in [0,511], negative 1/0 per axis
+/* Input forwarding (SINGLE-OWNER rule). The AppKit main thread only ENQUEUES
+ * commands; the RDP worker thread drains them and is the ONLY thread that
+ * calls the FreeRDP input/CLIPRDR APIs. Each enqueue wakes the worker via the
+ * per-session command wake event and returns immediately.
+ *
+ *   mouse_move:  x/y desktop pixels. A drag is PURE move — never carries held
+ *                button bits (KI-018: BUTTONn without DOWN is xrdp RELEASE).
+ *   mouse_button:button 1=left 2=right 3=middle, down 1/0, x/y position
+ *   mouse_wheel: delta/hdelta in [0,511], negative 1/0 per axis, x/y position
  *   key:         down 1/0, repeat 1/0 (auto-repeat), scancode = XT make code,
- *                extended 1/0 (E0-prefixed keys: arrows, rctrl, ralt, ...)   */
-int jr_session_send_mouse_move(jr_session_t* s, int x, int y, int buttons);
-int jr_session_send_mouse_button(jr_session_t* s, int button, int down, int x, int y);
-int jr_session_send_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta,
-                                int hnegative, int x, int y);
-int jr_session_send_key_scancode(jr_session_t* s, int down, int repeat, int scancode,
-                                 int extended);
-/* Reset: release every modifier key (LCtrl/RCtrl/LShift/RShift/LAlt/RAlt/
- * LMeta/RMeta). Heals a "stuck Super" on the remote side (KI-023): macOS can
- * swallow the key-up of Command (system shortcuts like Cmd+Tab/Cmd+Q), and
- * xrdp keeps the stale modifier state in its persistent X session across
- * reconnects. Releasing a key that isn't held is a no-op remotely, so this is
- * safe to call on every connect / focus change / input attach. */
-int jr_session_reset_keyboard_modifiers(jr_session_t* s);
+ *                extended 1/0 (E0-prefixed keys: arrows, rctrl, ralt, ...)
+ *   unicode_text: UTF-8 text committed by the macOS input method (IME); the
+ *                worker decodes to UTF-16 and sends per-unit press/release. */
+int jr_session_enqueue_mouse_move(jr_session_t* s, int x, int y);
+int jr_session_enqueue_mouse_button(jr_session_t* s, int button, int down, int x, int y);
+int jr_session_enqueue_mouse_wheel(jr_session_t* s, int delta, int negative, int hdelta,
+                                   int hnegative, int x, int y);
+int jr_session_enqueue_key_scancode(jr_session_t* s, int down, int repeat, int scancode,
+                                    int extended);
+int jr_session_enqueue_unicode_text(jr_session_t* s, const char* utf8);
+/* Offer local (Mac) clipboard text to the remote. `utf8` is a snapshot made on
+ * the main thread; the worker stores it and drives the CLIPRDR handshake. */
+int jr_session_enqueue_local_clipboard_text(jr_session_t* s, const char* utf8);
+int jr_session_enqueue_resize(jr_session_t* s, int width, int height);
+/* Enqueue a release of every modifier key (LCtrl/RCtrl/LShift/RShift/LAlt/
+ * RAlt/LMeta/RMeta). Heals a "stuck Super" on the remote side (KI-023):
+ * macOS can swallow the key-up of Command (Cmd+Tab/Cmd+Q/Spotlight) and xrdp
+ * keeps the stale modifier state in its persistent X session. Releasing a
+ * non-held key is a no-op remotely, so this is safe at connect/focus/attach. */
+int jr_session_enqueue_reset_modifiers(jr_session_t* s);
 int jr_session_set_size(jr_session_t* s, int width, int height);
-/* Clipboard (text only). set_text offers local text to the remote; the
- * remote->local direction is pushed to the Mac pasteboard automatically. */
-int jr_session_set_clipboard_text(jr_session_t* s, const char* utf8);
+/* Clipboard (text only). `jr_clip_store_text` is a thread-safe snapshot store
+ * (no FreeRDP handshake, safe from the AppKit main thread); the Mac->remote
+ * handshake is driven by enqueueing LOCAL_CLIPBOARD_TEXT (worker announces).
+ * The remote->local direction is pushed to the Mac pasteboard automatically on
+ * the worker when the session is the focused clipboard owner. */
+int jr_clip_store_text(jr_session_t* s, const char* utf8);
 void jr_clipboard_sync_start(void* session); /* poll Mac pasteboard -> remote */
 void jr_clipboard_sync_stop(void);
 const char* jr_last_error(jr_session_t* s);
+
+/* Diagnostics / test hooks. UTF-8 <-> UTF-16LE text codecs (text-only
+ * clipboard + IME commit path). The returned buffers are malloc'd; caller
+ * owns. Pure functions with no FreeRDP/WinPR dependency. */
+char* jr_utf16le_to_utf8(const uint8_t* utf16le, uint32_t len);
+uint8_t* jr_utf8_to_utf16le(const char* utf8, uint32_t* out_len);
 
 /* Native desktop view (implemented in macos_view.m). */
 void* jr_view_create(void);
