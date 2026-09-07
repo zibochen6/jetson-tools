@@ -4,23 +4,29 @@ import {
   sessionPathLabel,
   SessionDesktopGateway,
 } from "./sessionsStore";
-import { RdpLaunchResult, RdpStatus } from "../features/connection/types";
+import {
+  ConnectionErrorCode,
+  ConnectionFailure,
+  RdpLaunchResult,
+  RdpStatus,
+} from "../features/connection/types";
 import { SessionStatusEntry } from "../features/connection/tauriService";
 
 interface FakeGateway extends SessionDesktopGateway {
   calls: string[];
   statuses: Map<string, RdpStatus>;
-  launchShouldFail: boolean;
+  /** When set, every launch rejects with this typed code (KI-036 tests). */
+  launchFailureCode: ConnectionErrorCode | null;
 }
 
 function fakeGateway(): FakeGateway {
   const gw: FakeGateway = {
     calls: [],
     statuses: new Map(),
-    launchShouldFail: false,
+    launchFailureCode: null,
     async launch(sessionId, _input, options): Promise<RdpLaunchResult> {
       gw.calls.push(`launch:${sessionId}:${options.focusOnLaunch}`);
-      if (gw.launchShouldFail) throw new Error("nope");
+      if (gw.launchFailureCode) throw new ConnectionFailure(gw.launchFailureCode);
       gw.statuses.set(sessionId, { kind: "running" });
       return { kind: "opened" };
     },
@@ -355,5 +361,237 @@ describe("sessionsStore (identity-v3: deviceId keys)", () => {
     expect(sessionPathLabel(store.getState().sessions["seeed@id-b"])).toBe(
       "LAN 192.168.2.18",
     );
+  });
+});
+describe("sessionsStore: unreachable recovery chain (KI-036 / KI-035)", () => {
+  const A_ID = "seeed@192.168.1.31";
+
+  it("exit with error hides the frozen view and pulses the tab (not silent)", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, {
+        kind: "exited",
+        exitCode: 1,
+        error: "connection lost",
+      });
+      await store.getState().pollStatuses();
+
+      const s = store.getState().sessions[A_ID];
+      // The tab pulses (launching) while a reconnect is pending — and the
+      // frozen last frame no longer covers the webview (KI-035 symptom).
+      expect(s.phase).toBe("launching");
+      expect(s.retryPending).toBe(true);
+      expect(s.retries).toBe(1);
+      expect(gw.calls).toContain("focus:null");
+      // The tab itself stays selected so the reconnect re-focuses it later.
+      expect(store.getState().activeId).toBe(A_ID);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an unreachable relaunch failure keeps the reconnect chain alive", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "rdp_connection_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      // Desktop vanished → ready → user clicks the tab → relaunch fails.
+      gw.statuses.set(A_ID, { kind: "notRunning" });
+      await store.getState().pollStatuses();
+      expect(store.getState().sessions[A_ID].phase).toBe("ready");
+
+      store.getState().focusTab(A_ID);
+      await flush(); // 1st relaunch attempt fails → chain scheduled
+
+      const s = store.getState().sessions[A_ID];
+      expect(s.phase).toBe("launching"); // NOT dead-ended "error"
+      expect(s.retries).toBe(1);
+      expect(s.retryPending).toBe(true);
+
+      // Attempt 2 after the fast 2s window.
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(2);
+      expect(store.getState().sessions[A_ID].retries).toBe(2);
+
+      // Attempt 3 still fast.
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(3);
+
+      // Attempt 4 fires at the end of the last fast window...
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(4);
+
+      // ...and the NEXT one is SLOW (10s: Jetson-reboot window) — not at +2s...
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(4);
+      // ...but at +10s.
+      await vi.advanceTimersByTimeAsync(8000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a non-retryable launch failure still dead-ends the tab", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "rdp_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, { kind: "notRunning" });
+      await store.getState().pollStatuses();
+      store.getState().focusTab(A_ID);
+      await flush();
+
+      expect(store.getState().sessions[A_ID].phase).toBe("error");
+      expect(store.getState().sessions[A_ID].retryPending).toBe(false);
+      // No reconnect was scheduled.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await flush();
+      expect(gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the chain caps at 8 attempts and lands on error", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "tunnel_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, {
+        kind: "exited",
+        exitCode: 1,
+        error: "connection lost",
+      });
+      await store.getState().pollStatuses(); // schedules attempt 1
+
+      // 3 fast (2s) + 5 slow (10s) windows: 6s + 50s.
+      await vi.advanceTimersByTimeAsync(3 * 2000);
+      await flush();
+      await vi.advanceTimersByTimeAsync(5 * 10_000);
+      await flush();
+
+      const launches = gw.calls.filter((c) => c.startsWith(`launch:${A_ID}`));
+      expect(launches).toHaveLength(8);
+      const s = store.getState().sessions[A_ID];
+      expect(s.phase).toBe("error");
+      expect(s.retryPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the chain recovers when the device comes back", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "rdp_connection_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, {
+        kind: "exited",
+        exitCode: 1,
+        error: "connection lost",
+      });
+      await store.getState().pollStatuses();
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+      expect(store.getState().sessions[A_ID].phase).toBe("launching");
+
+      // The Jetson finished rebooting: the next attempt succeeds.
+      gw.launchFailureCode = null;
+      await vi.advanceTimersByTimeAsync(2000);
+      await flush();
+
+      const s = store.getState().sessions[A_ID];
+      expect(s.phase).toBe("running");
+      expect(s.retries).toBe(0);
+      expect(s.retryPending).toBe(false);
+      // The still-selected tab is brought back on screen automatically.
+      expect(gw.calls).toContain(`focus:${A_ID}`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pollStatuses does not interrupt a pending reconnect (no infinite loop)", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "rdp_connection_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, {
+        kind: "exited",
+        exitCode: 1,
+        error: "connection lost",
+      });
+      await store.getState().pollStatuses(); // attempt 1 pending
+
+      // While pending, the 1s poll sees the backend session gone / exited —
+      // it must NOT reset retries (infinite loop) nor flip the tab to ready.
+      gw.statuses.clear();
+      for (let i = 0; i < 3; i++) {
+        await store.getState().pollStatuses();
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      const s = store.getState().sessions[A_ID];
+      expect(s.phase).toBe("launching");
+      expect(s.retryPending).toBe(true);
+      expect(s.retries).toBeLessThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("user retry after a capped chain restarts with a fresh budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      gw.launchFailureCode = "rdp_connection_failed";
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+
+      gw.statuses.set(A_ID, {
+        kind: "exited",
+        exitCode: 1,
+        error: "connection lost",
+      });
+      await store.getState().pollStatuses();
+      await vi.advanceTimersByTimeAsync(3 * 2000);
+      await flush();
+      await vi.advanceTimersByTimeAsync(5 * 10_000);
+      await flush();
+      expect(store.getState().sessions[A_ID].phase).toBe("error");
+
+      // The device is back; the user clicks the red tab.
+      gw.launchFailureCode = null;
+      store.getState().focusTab(A_ID);
+      await flush();
+      expect(store.getState().sessions[A_ID].phase).toBe("running");
+      expect(store.getState().sessions[A_ID].retries).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

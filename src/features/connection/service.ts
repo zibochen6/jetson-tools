@@ -163,6 +163,7 @@ function mockReadyEnvironment(): RemoteEnvironmentReport {
     xrdp_in_ssl_cert_group: true,
     session_configured: true,
     xsessionrc_ok: true,
+    lo_ipv6_loopback: true,
     issues: [],
   };
 }

@@ -56,6 +56,7 @@ const ENV: RemoteEnvironmentReport = {
   xrdp_in_ssl_cert_group: true,
   session_configured: true,
   xsessionrc_ok: true,
+  lo_ipv6_loopback: true,
   issues: [],
 };
 
@@ -743,6 +744,349 @@ describe("identity-v3: machine-id, naming, multi-path", () => {
     await store.getState().connect();
     expect(store.getState().state).toBe("desktop_opened");
     expect(ctl.connectHosts).toEqual(["192.168.2.18", "100.114.170.49"]);
+  });
+
+  it("paths are probed in parallel and ordered by lowest RTT first", async () => {
+    probePathsMock.mockResolvedValueOnce([
+      { address: "192.168.2.18", reachable: true, rttMs: 40 },
+      { address: "100.114.170.49", reachable: true, rttMs: 5 },
+    ]);
+    const ctl = controllableService(DEVICE_V3);
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("desktop_opened");
+    // Lowest RTT (Tailscale) is tried first even though the form holds LAN.
+    expect(ctl.connectHosts[0]).toBe("100.114.170.49");
+    expect(probePathsMock).toHaveBeenCalledWith([
+      "192.168.2.18",
+      "100.114.170.49",
+    ]);
+  });
+
+  it("every address failing surfaces the connect error", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    ctl.setBehavior("auth_failed"); // fails on every candidate
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "pw",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("error");
+    expect(store.getState().error?.code).toBe("auth_failed");
+    expect(ctl.connectHosts).toEqual(["192.168.2.18", "100.114.170.49"]);
+  });
+});
+describe("initRemembered boot-window retry (KI-036)", () => {
+  beforeEach(() => {
+    probePathsMock.mockResolvedValue([]);
+  });
+
+  /** A controllable service whose connect fails with `code` for the first
+   * `failTimes` calls (each candidate sweep of a v3 device consumes 2 calls:
+   * LAN then Tailscale). */
+  function bootWindowService(
+    device: JetsonDevice,
+    failTimes: number,
+    code: "ssh_timeout" | "tunnel_failed" | "auth_failed",
+  ) {
+    const ctl = controllableService(device);
+    const originalConnect = ctl.service.connect.bind(ctl.service);
+    let connects = 0;
+    const wrapped = ctl.service as ConnectionService & {
+      connect: ConnectionService["connect"];
+    };
+    wrapped.connect = async (input, opts) => {
+      connects += 1;
+      if (connects <= failTimes) throw new ConnectionFailure(code);
+      return originalConnect(input, opts);
+    };
+    return { service: ctl.service, connects: () => connects };
+  }
+
+  it("retries during the boot window and connects once the device is up", async () => {
+    vi.useFakeTimers();
+    try {
+      const mem = fakeMemory([savedDeviceFixture()]);
+      // Two full candidate sweeps fail (2 paths × 2 sweeps), the third lands.
+      const svc = bootWindowService(DEVICE_V3, 4, "ssh_timeout");
+      const store = createConnectionStore(() => svc.service, mem.gateway);
+
+      const done = store.getState().initRemembered();
+      await flush(); // first sweep → error (device still booting)
+      expect(store.getState().state).toBe("error");
+      expect(store.getState().error?.code).toBe("ssh_timeout");
+      expect(svc.connects()).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await flush(); // second sweep → still error
+      expect(store.getState().state).toBe("error");
+      expect(svc.connects()).toBe(4);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await flush(); // third sweep → device is up
+      await done;
+      expect(store.getState().state).toBe("desktop_opened");
+      expect(svc.connects()).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the retry budget is bounded (1 + 3 sweeps, then it stops)", async () => {
+    vi.useFakeTimers();
+    try {
+      const mem = fakeMemory([savedDeviceFixture()]);
+      const svc = bootWindowService(DEVICE_V3, Number.POSITIVE_INFINITY, "tunnel_failed");
+      const store = createConnectionStore(() => svc.service, mem.gateway);
+
+      const done = store.getState().initRemembered();
+      await flush();
+      await vi.advanceTimersByTimeAsync(3 * 15_000);
+      await flush();
+      await done;
+
+      expect(store.getState().state).toBe("error");
+      // 4 sweeps × 2 candidate paths — nothing more after the budget.
+      expect(svc.connects()).toBe(8);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+      expect(svc.connects()).toBe(8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a non-retryable failure stops the boot window immediately", async () => {
+    vi.useFakeTimers();
+    try {
+      const mem = fakeMemory([savedDeviceFixture()]);
+      const svc = bootWindowService(DEVICE_V3, Number.POSITIVE_INFINITY, "auth_failed");
+      const store = createConnectionStore(() => svc.service, mem.gateway);
+
+      const done = store.getState().initRemembered();
+      await flush();
+      await done;
+
+      expect(store.getState().state).toBe("error");
+      expect(store.getState().error?.code).toBe("auth_failed");
+      // The auth failure swept every candidate once, then stopped for good.
+      expect(svc.connects()).toBe(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+      expect(svc.connects()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("user interaction during the wait stops the boot window", async () => {
+    vi.useFakeTimers();
+    try {
+      const mem = fakeMemory([savedDeviceFixture()]);
+      const svc = bootWindowService(DEVICE_V3, 4, "ssh_timeout");
+      const store = createConnectionStore(() => svc.service, mem.gateway);
+
+      const done = store.getState().initRemembered();
+      await flush();
+      expect(store.getState().state).toBe("error");
+
+      // The user hits Back while the retry is pending.
+      store.getState().back();
+      expect(store.getState().state).toBe("idle");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+      await done;
+      expect(store.getState().state).toBe("idle");
+      expect(svc.connects()).toBe(2); // no further sweeps
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("identity-v3: machine-id, naming, multi-path", () => {
+  beforeEach(() => {
+    probePathsMock.mockResolvedValue([]);
+    useSessionsStore.setState({ sessions: {}, order: [], activeId: null });
+  });
+
+  it("a new machine-id must be named before the desktop opens", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    const mem = fakeMemory();
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "pw",
+      remember: true,
+      deviceId: null,
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("naming_device");
+    expect(ctl.launches).toHaveLength(0);
+
+    // Blank names are rejected — the gate cannot be skipped.
+    expect(await store.getState().confirmDeviceName("   ")).toBe(false);
+    expect(store.getState().state).toBe("naming_device");
+
+    expect(await store.getState().confirmDeviceName("robotics")).toBe(true);
+    expect(store.getState().state).toBe("desktop_opened");
+    expect(
+      mem.calls.some((c) =>
+        c.startsWith("save:5dbfb12400000000:seeed:pw:robotics"),
+      ),
+    ).toBe(true);
+    // The session key uses the deviceId, not the IP.
+    expect(ctl.launches[0].sessionId).toBe("seeed@5dbfb12400000000");
+  });
+
+  it("a remembered, named device skips the naming gate", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("desktop_opened");
+    expect(ctl.launches[0].sessionId).toBe("seeed@5dbfb12400000000");
+  });
+
+  it("entering another address of a connected device reuses the session", async () => {
+    useSessionsStore.getState().register(
+      {
+        host: "192.168.2.18",
+        username: "seeed",
+        password: "pw",
+        deviceId: "5dbfb12400000000",
+        displayName: "robotics",
+      },
+      DEVICE_V3,
+    );
+
+    const ctl = controllableService(DEVICE_V3);
+    const store = createConnectionStore(() => ctl.service);
+    store.getState().setForm({
+      host: "100.114.170.49",
+      username: "seeed",
+      password: "pw",
+      remember: true,
+      deviceId: null,
+    });
+
+    await store.getState().connect();
+    const s = store.getState();
+    expect(s.state).toBe("idle");
+    expect(s.notice).toContain("已作为「robotics」连接");
+    expect(ctl.launches).toHaveLength(0); // no second desktop for one device
+    expect(useSessionsStore.getState().order).toHaveLength(1); // still ONE tab
+  });
+
+  it("an unreachable address falls through to the next path", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    const original = ctl.service.connect.bind(ctl.service);
+    ctl.service.connect = async (input, opts) => {
+      if (input.host === "192.168.2.18") {
+        ctl.connectHosts.push(input.host);
+        throw new ConnectionFailure("ssh_timeout");
+      }
+      return original(input, opts);
+    };
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("desktop_opened");
+    expect(ctl.connectHosts).toEqual(["192.168.2.18", "100.114.170.49"]);
+    // The winning path is what prepare/launch use.
+    expect(ctl.launches[0].host).toBe("100.114.170.49");
+    expect(ctl.launches[0].sessionId).toBe("seeed@5dbfb12400000000");
+  });
+
+  it("auth failure on one address falls through to the next path", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    const original = ctl.service.connect.bind(ctl.service);
+    ctl.service.connect = async (input, opts) => {
+      if (input.host === "192.168.2.18") {
+        ctl.connectHosts.push(input.host);
+        throw new ConnectionFailure("auth_failed");
+      }
+      return original(input, opts);
+    };
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("desktop_opened");
+    expect(ctl.connectHosts).toEqual(["192.168.2.18", "100.114.170.49"]);
+  });
+
+  it("tunnel setup failure on one address falls through to the next path", async () => {
+    const ctl = controllableService(DEVICE_V3);
+    const original = ctl.service.connect.bind(ctl.service);
+    ctl.service.connect = async (input, opts) => {
+      if (input.host === "192.168.2.18") {
+        ctl.connectHosts.push(input.host);
+        throw new ConnectionFailure("tunnel_failed");
+      }
+      return original(input, opts);
+    };
+    const mem = fakeMemory([savedDeviceFixture()]);
+    const store = createConnectionStore(() => ctl.service, mem.gateway);
+    store.setState({ savedDevices: [savedDeviceFixture()] });
+    store.getState().setForm({
+      host: "192.168.2.18",
+      username: "seeed",
+      password: "",
+      remember: true,
+      deviceId: "5dbfb12400000000",
+    });
+
+    await store.getState().connect();
+    expect(store.getState().state).toBe("desktop_opened");
+    expect(ctl.connectHosts).toEqual(["192.168.2.18", "100.114.170.49"]);
+    expect(ctl.launches[0].host).toBe("100.114.170.49");
   });
 
   it("paths are probed in parallel and ordered by lowest RTT first", async () => {

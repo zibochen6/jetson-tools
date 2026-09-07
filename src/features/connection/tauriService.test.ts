@@ -270,6 +270,30 @@ describe("TauriConnectionService", () => {
     ).rejects.toMatchObject({ code: "rdp_failed" });
   });
 
+  it("maps RDP_CONNECTION_FAILED -> rdp_connection_failed (KI-036)", async () => {
+    invokeMock.mockRejectedValue({
+      code: "RDP_CONNECTION_FAILED",
+      message: "Could not reach the device",
+    });
+    await expect(
+      new TauriConnectionService().launch({
+        host: "h",
+        username: "u",
+        password: "p",
+      }),
+    ).rejects.toMatchObject({ code: "rdp_connection_failed" });
+  });
+
+  it("maps tunnel setup failure -> tunnel_failed", async () => {
+    invokeMock.mockRejectedValue({
+      code: "TUNNEL_FAILED",
+      message: "Secure tunnel: x",
+    });
+    await expect(new TauriConnectionService().connect(input, {})).rejects.toMatchObject({
+      code: "tunnel_failed",
+    });
+  });
+
   it("maps RDP_PASSWORD_MISSING -> saved_password_missing", async () => {
     invokeMock.mockRejectedValue({ code: "RDP_PASSWORD_MISSING", message: "x" });
     await expect(

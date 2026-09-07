@@ -218,6 +218,8 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | KI-021 | 未开手动隧道即连不上 | release 内嵌手动隧道路由 | 已修复（app 自建隧道） |
 | KI-023 | 按 e 打开文件管理器、空格失灵（其他键正常） | 远端 Super 卡键：Cmd 松开事件被 macOS 系统快捷键路径吞掉 + xrdp 常驻会话保留卡键态 | 已修复（连接/焦点/attach 自动 reset 修饰键） |
 | KI-025 | Tab 被遮挡；显示 running 但纯白 | 原生视图漏算 macOS safe area；sesman 假健康且启动未等真实首帧 | 已修复（safe area + 首帧门槛 + 服务自愈） |
+| KI-036 | Jetson 断电重启后反复“Couldn't reach this Jetson” | **半开隧道被当健康复用** | 已修复（端到端 banner 健康检查 + 失败即废弃） |
+| KI-038 | 设备重启后 RDP 握手成功但桌面永不起，xrdp 报 Error connecting to sesman | **sysctl 禁用 IPv6 抹掉 lo 的 ::1，xrdp connect_loopback 死锁** | 已自愈（checker 检测 + bootstrap 修复） |
 | 新 | 新症状… | 待分析 | |
 
 ※ KI 详文见 `docs/KNOWN_ISSUES.md`；嵌入式设计见 `docs/EMBEDDED_RDP.md`。

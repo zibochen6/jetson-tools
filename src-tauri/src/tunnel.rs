@@ -188,6 +188,22 @@ impl TunnelManager {
         guard.external_target = None;
     }
 
+    /// Force-drop the tunnel for one device (KI-036). The caller invokes this
+    /// after an SSH dial THROUGH the tunnel failed as unreachable — the tunnel
+    /// may be half-open (Jetson rebooted) while still looking locally alive,
+    /// so the next `ensure` must spawn a fresh ssh instead of recycling the
+    /// dead one. Other devices' tunnels are untouched; both addresses of the
+    /// SAME device share this key and are intentionally dropped together.
+    /// Blocking (kills the process group); call from `spawn_blocking`.
+    pub fn invalidate(&self, device_key: &str) {
+        let key = device_key.to_string();
+        let mut guard = self.inner.lock().unwrap();
+        if guard.active.remove(&key).is_some() {
+            // Drop kills the child + removes its secret files.
+            eprintln!("[jr-flow] tunnel invalidated key={key}");
+        }
+    }
+
     /// Ensure a tunnel to `host` exists and return the loopback endpoints.
     /// `device_key` is the stable per-device identity (`username@deviceId`,
     /// falling back to `username@host`) — tunnels are keyed by it so the two
@@ -415,8 +431,50 @@ fn is_healthy(t: &mut ActiveTunnel) -> bool {
         Ok(None) => {}
         _ => return false,
     }
-    // ...and both forwards still accept connections.
-    port_open(t.endpoints.ssh_port) && port_open(t.endpoints.rdp_port)
+    // ...both local forwards still accept connections...
+    if !(port_open(t.endpoints.ssh_port) && port_open(t.endpoints.rdp_port)) {
+        return false;
+    }
+    // ...and the REMOTE sshd is actually reachable THROUGH the forward (KI-036).
+    // A half-open connection (Jetson power-cycled) keeps the local ssh alive
+    // for up to ServerAliveInterval×CountMax ≈ 45s while the local -L listeners
+    // still accept and then fail. Only an end-to-end banner read proves the
+    // tunnel still terminates at a live sshd.
+    ssh_banner_via_forward(t.endpoints.ssh_port)
+}
+
+/// End-to-end liveness probe: dial the tunnel's local ssh forward and require
+/// the remote daemon's identification line (`SSH-`). Each connection to the
+/// forward is a separate channel over the tunnel ssh process, so probing does
+/// not disturb in-flight traffic; a dead remote yields EOF/timeout instead.
+fn ssh_banner_via_forward(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(1500)))
+        .is_err()
+    {
+        return false;
+    }
+    let mut banner = [0u8; 4];
+    let mut read = 0usize;
+    while read < banner.len() {
+        match std::io::Read::read(&mut stream, &mut banner[read..]) {
+            Ok(0) => return false, // EOF: the remote side closed the channel
+            Ok(n) => read += n,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return false
+            }
+            Err(_) => return false,
+        }
+    }
+    &banner == b"SSH-"
 }
 
 fn port_open(port: u16) -> bool {
@@ -961,5 +1019,63 @@ mod tests {
     fn stderr_summary_is_bounded() {
         let summary = stderr_summary(&"x".repeat(STDERR_SUMMARY_LIMIT + 20));
         assert_eq!(summary.chars().count(), STDERR_SUMMARY_LIMIT);
+    }
+
+    /// Fake listener that immediately accepts a connection and serves a
+    /// payload (or EOF), then stops. Used to exercise every branch of
+    /// `ssh_banner_via_forward` without a real sshd.
+    fn serve_once(port: u16, payload: Option<String>) {
+        std::thread::spawn(move || {
+            let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+            if let Ok((mut conn, _)) = listener.accept() {
+                if let Some(data) = payload {
+                    use std::io::Write as _;
+                    let _ = conn.write_all(data.as_bytes());
+                }
+                // Dropping `conn` closes it → the probe sees EOF for empty payloads.
+            }
+        });
+    }
+
+    fn ephemeral_port() -> u16 {
+        TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[test]
+    fn banner_probe_accepts_a_real_ssh_identification_line() {
+        let port = ephemeral_port();
+        serve_once(port, Some("SSH-2.0-OpenSSH_9.6\r\n".to_string()));
+        // Give the accept thread a moment to bind before dialing.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(ssh_banner_via_forward(port));
+    }
+
+    #[test]
+    fn banner_probe_rejects_eof_after_accept() {
+        // A dead remote forward accepts the local TCP connect, then the
+        // channel closes (EOF) — exactly the half-open Jetson-reboot case.
+        let port = ephemeral_port();
+        serve_once(port, None);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!ssh_banner_via_forward(port));
+    }
+
+    #[test]
+    fn banner_probe_rejects_a_closed_port() {
+        let port = ephemeral_port(); // bound then immediately dropped: nothing listens
+        assert!(!ssh_banner_via_forward(port));
+    }
+
+    #[test]
+    fn banner_probe_rejects_a_non_ssh_banner() {
+        // Something else (e.g. an HTTP error page) answers the port.
+        let port = ephemeral_port();
+        serve_once(port, Some("HTTP/1.1 502\r\n".to_string()));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!ssh_banner_via_forward(port));
     }
 }

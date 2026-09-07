@@ -286,3 +286,27 @@
   - 修复后：桌面区域**整体变为首页**（diff=131.31，均值 117.8/std 86.5 → 247.2/std 15.2），标签栏字形簇 36→15（会话标签消失，只剩总览）；日志依次出现 `close_session id=…` → `ERRCONNECT_CONNECT_CANCELLED` → **`unmount wasMounted=1`**。
   - 回归测试：`closeTab` 关掉唯一会话时必须 `focus:null`（**去掉修复该测试即失败**，已实测）；关闭后台标签不得干扰当前屏幕。
 - **状态**：✅ 已修复并真机验证。
+## KI-036 — Jetson 断电重启后反复 "Couldn't reach this Jetson"（已修复）
+
+- **症状**：Jetson 重新上电/重启后，app 端每次连接与 Retry 都失败并停在「Couldn't reach this Jetson / Could not reach the device」；需等约 45 秒甚至重启 app 才能恢复。
+- **根因（两项叠加）**：
+  1. `TunnelManager::ensure` 的健康检查只验证「ssh 子进程存活 && 本地 -L 转发端口可 accept」。设备断电后 TCP 半开，ssh 要到 `ServerAliveInterval(15s) × CountMax(3)` ≈ 45s 才自杀；期间本地转发照样 accept（远端 channel 已死），于是每次连接都复用这条僵尸隧道，russh 经 127.0.0.1 拨号必然超时。
+  2. 前端只有一次启动自动重连（`initRemembered`），失败即落错误页；会话内自动重连链对「relaunch 失败（设备不可达）」也只尝试一次就置 `error` 终止。
+- **修复**：
+  - `is_healthy` 升级为端到端检查：额外经本地 ssh 转发读取远端 daemon 的 `SSH-` 标识行（EOF/超时即判定隧道死亡，连接被废弃并重新 spawn）。探测连接是隧道上的独立 channel，不影响在途流量。
+  - 新增 `TunnelManager::invalidate(device_key)`：`probe/prepare` 经隧道拨号失败且错误为 `SshTimeout`/`ConnectionRefused` 时立即废弃该设备隧道，下一次 ensure 必然 spawn 全新 ssh。
+  - 前端 `RDP_CONNECTION_FAILED` 映射为独立的 `rdp_connection_failed` 错误码；`sessionsStore` 重连链统一为「3 次 2s 快窗口 + 5 次 10s 慢窗口（覆盖设备重启），上限 8 次」，等待期间 Tab 显示重连脉冲、冻结画面隐藏；`initRemembered` 对 `ssh_timeout`/`tunnel_failed` 以 15s×3 补试，用户交互或其它结果即停止。
+- **状态**：✅ 单测覆盖（banner 探测、重连链节奏/封顶/恢复、启动窗口重试）；断电重启真机验证见回归指南 §3.7。
+
+## KI-038 — sysctl 禁用 IPv6 抹掉 lo 的 ::1，xrdp 永远连不上 sesman（已修复，自愈）
+
+- **症状**：设备重启后 app 全自动重连能走到 RDP 握手（TLS、凭据都成功），但桌面永远起不来；xrdp 日志反复 `Error connecting to sesman: 127.0.0.1 port: 3350`，sesman 日志零建会话记录。设备端 `xrdp`/`xrdp-sesman` 服务 active、3350/3389 都在监听——环境检查全绿但实际链路已死。**每次开机必现**（用户「每次重启就连不上」的设备侧根因）。
+- **根因（三层叠加）**：
+  1. `/etc/sysctl.conf` 手动设置 `net.ipv6.conf.all/default.disable_ipv6=1`（常见的"网络优化"），内核随之抹掉 lo 的 `::1/128`。
+  2. xrdp 0.9.17 `connect_loopback`（os_calls.c）对 `127.0.0.1` 目标**先试 `::1`**：非阻塞 connect 得 `EINPROGRESS` 即返回"进行中"——lo 无 ::1 时该连接永不完成（内核还会把源地址选成全机唯一 v6 地址 = enp3s0 的 fe80 链路本地，日志里的 `Closed socket (AF_INET6 fe80::...)` 即此）。
+  3. 后续重试在未完成的 connect 上得 `EALREADY`，v4 回退分支（127.0.0.1 / ::ffff:127.0.0.1）永远不执行 → xrdp 到 sesman 零包、永久失败。
+- **诊断要点**：`ip -6 addr show lo` 无 `inet6 ::1/128`；`ss -tln6` 见 sesman 监听 `*`；python 非阻塞 `connect(::1)` 返回 EINPROGRESS 且 getsockname 为 fe80 即实锤。tcpdump lo 上 3350 零包（连接在进程内即失败）。
+- **修复（自愈，0.3.7）**：
+  - `check-environment.sh` 新增 `lo_ipv6_loopback` 事实；Rust `classify` 将其纳入 service_ok（缺失 → Broken → 走自愈装机）。
+  - `bootstrap.sh` 新增幂等步骤：注释 sysctl 中的 disable_ipv6 行（带 KI-038 标记）+ 运行时恢复 + 兜底显式加回 `::1/128`。
+- **状态**：✅ 真机（robotics 32G）验证：修复 lo 的 ::1 后桌面恢复；自愈逻辑单测覆盖（classify broken + ENV 字段）。

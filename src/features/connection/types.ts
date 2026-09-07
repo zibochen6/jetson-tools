@@ -37,6 +37,7 @@ export type ConnectionErrorCode =
   | "sudo_required"
   | "verification_failed"
   | "saved_password_missing"
+  | "tunnel_failed"
   | "unknown";
 
 /**
@@ -146,6 +147,9 @@ export interface RemoteEnvironmentReport {
   xrdp_in_ssl_cert_group: boolean;
   session_configured: boolean;
   xsessionrc_ok: boolean;
+  /** KI-038: xrdp 0.9.17 dials sesman via ::1 first — without it on lo the
+   * whole remote-desktop plane is dead despite every service "running". */
+  lo_ipv6_loopback: boolean;
   issues: string[];
 }
 
@@ -290,6 +294,11 @@ const ERROR_COPY: Record<ConnectionErrorCode, ConnectionError> = {
       "Go back and enter the device password again.",
       "If the password changed on the Jetson, type the new one and reconnect.",
     ],
+  },
+  tunnel_failed: {
+    code: "tunnel_failed",
+    title: "Secure tunnel couldn't be established.",
+    suggestions: ["This is usually a network blip — retry, or check the network."],
   },
   unknown: {
     code: "unknown",

@@ -116,6 +116,66 @@ else
 fi
 log "step=fix_xsessionrc status=done"
 
+# ---------- 3c. 自愈：禁用 xfce4-screensaver 自动启动 ----------
+# XRDP 会话空闲锁屏后，screensaver 的全屏纯色窗口 IsViewable 盖住桌面，
+# app 首帧门槛永久判 no usable frame；restart xrdp 不杀会话，自愈无效。
+log "step=disable_screensaver status=start"
+AUTOSTART_DIR="$SESSION_HOME/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+SCREENSAVER_ENTRY="$AUTOSTART_DIR/xfce4-screensaver.desktop"
+if [ ! -f "$SCREENSAVER_ENTRY" ] || ! grep -q '^Hidden=true$' "$SCREENSAVER_ENTRY" 2>/dev/null; then
+  cat > "$SCREENSAVER_ENTRY" << 'XEOF'
+[Desktop Entry]
+Type=Application
+Name=xfce4-screensaver
+Exec=xfce4-screensaver
+X-GNOME-Autostart-enabled=false
+Hidden=true
+XEOF
+  session_chown "$SCREENSAVER_ENTRY"
+  log "  wrote $SCREENSAVER_ENTRY (Hidden=true)"
+else
+  log "  $SCREENSAVER_ENTRY already correct"
+fi
+log "step=disable_screensaver status=done"
+
+# ---------- 3d. 自愈：恢复 lo 的 IPv6 ::1（KI-038） ----------
+# xrdp 0.9.17 的 connect_loopback 对 "127.0.0.1" 目标先试 ::1（非阻塞 connect 得
+# EINPROGRESS 即返回），lo 丢 ::1 后该连接永不完成、v4 回退永不执行 → xrdp 永远
+# 连不上 sesman（3350 监听但零包）→ 每次开机都「连不上桌面」。常见诱因：
+# /etc/sysctl.conf 手动禁用 IPv6 会抹掉 lo 的 ::1。此处幂等恢复：
+# 注释掉禁用行（带 KI-038 标记）+ 运行时恢复 + 兜底显式加回 ::1。
+log "step=fix_lo_ipv6 status=start"
+if ip -6 addr show lo 2>/dev/null | grep -q 'inet6 ::1/128'; then
+  log "  lo already has ::1/128"
+else
+  # a) 持久化：注释掉 sysctl 里禁用 IPv6 的行
+  if [ -f /etc/sysctl.conf ] && grep -qE '^net\.ipv6\.conf\.(all|default)\.disable_ipv6 *= *1' /etc/sysctl.conf; then
+    as_root sed -i 's|^net\.ipv6\.conf\(\..*\)\.disable_ipv6 *= *1|#net.ipv6.conf\1.disable_ipv6 = 1  # commented by Jetson Remote: xrdp 0.9.17 connect_loopback requires ::1 on lo (KI-038)|' /etc/sysctl.conf
+    log "  commented out disable_ipv6 lines in /etc/sysctl.conf"
+  fi
+  for f in /etc/sysctl.d/*.conf; do
+    [ -f "$f" ] || continue
+    if grep -qE '^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6 *= *1' "$f"; then
+      as_root sed -i 's|^net\.ipv6\.conf\(\..*\)\.disable_ipv6 *= *1|#net.ipv6.conf\1.disable_ipv6 = 1  # commented by Jetson Remote (KI-038)|' "$f"
+      log "  commented out disable_ipv6 lines in $f"
+    fi
+  done
+  # b) 运行时恢复（内核恢复后通常自动加回 ::1，再兜底显式加）
+  as_root sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
+  as_root sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
+  as_root sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
+  if ! ip -6 addr show lo 2>/dev/null | grep -q 'inet6 ::1/128'; then
+    as_root ip -6 addr add ::1/128 dev lo 2>/dev/null || true
+  fi
+  if ip -6 addr show lo 2>/dev/null | grep -q 'inet6 ::1/128'; then
+    log "  restored ::1/128 on lo"
+  else
+    log "  WARNING: could not restore ::1 on lo"
+  fi
+fi
+log "step=fix_lo_ipv6 status=done"
+
 # ---------- 4. 禁用 Wayland（仅当存在 gdm3；headless 无 gdm 时跳过） ----------
 if [ -f /etc/gdm3/custom.conf ]; then
   log "step=disable_wayland status=start"

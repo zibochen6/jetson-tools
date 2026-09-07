@@ -78,10 +78,19 @@ if [ -f "$HOME/.xsessionrc" ] && ! sh -n "$HOME/.xsessionrc" 2>/dev/null; then
   XSESSIONRC_OK="false"
 fi
 
+# KI-038：xrdp 0.9.17 的 connect_loopback 对 "127.0.0.1" 目标先尝试 ::1（非阻塞
+# connect 返回 EINPROGRESS 即返回），lo 丢失 ::1 后该连接永不完成、v4 回退分支
+# 永远不会执行——xrdp 永远连不上 sesman（端口监听但零包）。常见诱因：
+# /etc/sysctl.conf 手动禁用 IPv6（all/default.disable_ipv6=1）会把 lo 的 ::1 抹掉。
+LO_IPV6_LOOPBACK="false"
+if ip -6 addr show lo 2>/dev/null | grep -q 'inet6 ::1/128'; then
+  LO_IPV6_LOOPBACK="true"
+fi
+
 export XRDP_INSTALLED XRDP_VERSION XORGXRDP_INSTALLED XORGXRDP_VERSION \
        XFCE_INSTALLED XRDP_ENABLED XRDP_ACTIVE XRDP_SESMAN_ACTIVE \
        PORT_3389_LISTENING PORT_3350_LISTENING \
-       XRDP_IN_SSL_CERT_GROUP SESSION_CONFIGURED XSESSIONRC_OK
+       XRDP_IN_SSL_CERT_GROUP SESSION_CONFIGURED XSESSIONRC_OK LO_IPV6_LOOPBACK
 
 python3 - <<'PY'
 import json
@@ -107,5 +116,6 @@ print(json.dumps({
     "xrdp_in_ssl_cert_group": b("XRDP_IN_SSL_CERT_GROUP"),
     "session_configured": b("SESSION_CONFIGURED"),
     "xsessionrc_ok": b("XSESSIONRC_OK"),
+    "lo_ipv6_loopback": b("LO_IPV6_LOOPBACK"),
 }, ensure_ascii=False, indent=2))
 PY

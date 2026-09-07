@@ -212,6 +212,7 @@ const RUNNING_STAGES: ProvisionStage[] = [
 const RETRYABLE_CANDIDATE_CODES = new Set([
   "ssh_timeout",
   "auth_failed",
+  "tunnel_failed",
 ]);
 
 type ServiceFactory = () => ConnectionService;
@@ -287,6 +288,38 @@ export function createConnectionStore(
       const unreachable = candidates.filter((a) => !reachable.includes(a));
       const ordered = [...reachable, ...unreachable];
       return ordered.length > 0 ? ordered : candidates;
+    };
+
+    /**
+     * Auto-reconnect with a bounded boot window (KI-036): the Jetson may
+     * still be booting when the app starts — its sshd answers tens of
+     * seconds later, so a single attempt lands on the "Couldn't reach this
+     * Jetson" screen. Only unreachable-class failures retry; any other
+     * outcome — connected, host-key prompt, naming gate, a non-retryable
+     * error, or the user touching the wizard (Retry/Back left the error
+     * screen during the wait) — stops the loop. Total: 1 immediate + 3
+     * delayed attempts (~45s of boot coverage).
+     */
+    const autoConnectWithBootWindow = async (): Promise<void> => {
+      const MAX_BOOT_RETRIES = 3;
+      const BOOT_RETRY_DELAY_MS = 15_000;
+      for (let attempt = 0; attempt <= MAX_BOOT_RETRIES; attempt++) {
+        if (attempt > 0) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, BOOT_RETRY_DELAY_MS),
+          );
+          // The user drove the wizard during the wait — they own it now.
+          if (get().state !== "error") return;
+        }
+        await get().connect();
+        const st = get();
+        // Connected (desktop_opened; the shell hands it off to idle) or a
+        // decision screen (host key / naming) or a non-retryable error — done.
+        if (st.state !== "error") return;
+        const code = st.error?.code;
+        if (code !== "ssh_timeout" && code !== "tunnel_failed") return;
+        // Unreachable — likely still booting; fall through to the delayed retry.
+      }
     };
 
     const doConnect = async (decision?: HostKeyDecision): Promise<void> => {
@@ -862,7 +895,9 @@ export function createConnectionStore(
             deviceId: mru.deviceId ?? null,
           },
         });
-        if (mru.hasPassword) void get().connect();
+        if (mru.hasPassword) {
+          await autoConnectWithBootWindow();
+        }
       },
 
       forgetDevice: async (device) => {

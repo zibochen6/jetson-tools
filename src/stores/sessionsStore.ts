@@ -88,10 +88,18 @@ export interface SessionsStore {
   pollStatuses(): Promise<void>;
 }
 
-/** Same bounded auto-retry as the legacy single-desktop flow (macOS Local
- * Network permission: fails fast until the user clicks Allow). */
-const MAX_RDP_RETRIES = 5;
-const RETRY_DELAY_MS = 2000;
+/** Bounded auto-reconnect for a device that went unreachable (KI-036).
+ * Fast attempts first (macOS "Local Network" permission: fails fast until
+ * the user clicks Allow), then slow ones spanning a Jetson reboot (~45s of
+ * half-open ssh before the tunnel is even recycled). */
+const MAX_SESSION_RECONNECTS = 8;
+const FAST_RETRY_ATTEMPTS = 3;
+const RECONNECT_FAST_DELAY_MS = 2000;
+const RECONNECT_SLOW_DELAY_MS = 10000;
+
+/** Launch failures that mean "the device is (temporarily) gone" — keep the
+ * reconnect chain alive instead of dead-ending the tab. */
+const UNREACHABLE_CODES = new Set(["rdp_connection_failed", "tunnel_failed"]);
 
 export function createSessionsStore(injected?: SessionDesktopGateway) {
   const gateway: SessionDesktopGateway =
@@ -138,6 +146,15 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
           void gateway.focus(id);
         }
       } catch (err) {
+        const unreachable =
+          err instanceof ConnectionFailure && UNREACHABLE_CODES.has(err.code);
+        if (unreachable) {
+          // Device likely rebooting — continue the bounded reconnect chain
+          // instead of dead-ending the tab (KI-036).
+          patch(id, { retryPending: false });
+          scheduleReconnect(id);
+          return;
+        }
         patch(id, {
           phase: "error",
           retryPending: false,
@@ -150,6 +167,48 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
       }
     };
 
+    /** Schedule the next reconnect attempt: the tab pulses (launching),
+     * the frozen view is hidden, and a delayed forced relaunch runs. Shared
+     * by the exit-with-error path and the launch-failure path (KI-036). At
+     * the cap the tab lands on `error` and stays clickable for a
+     * user-initiated retry. */
+    const scheduleReconnect = (id: string): void => {
+      const session = get().sessions[id];
+      if (!session) return;
+      if (session.retryPending) return; // already scheduled
+      if (session.retries >= MAX_SESSION_RECONNECTS) {
+        patch(id, { phase: "error", retryPending: false });
+        if (get().activeId === id) {
+          void gateway.focus(null);
+        }
+        return;
+      }
+      const attempt = session.retries + 1;
+      const delay =
+        attempt <= FAST_RETRY_ATTEMPTS
+          ? RECONNECT_FAST_DELAY_MS
+          : RECONNECT_SLOW_DELAY_MS;
+      patch(id, {
+        phase: "launching",
+        retryPending: true,
+        retries: attempt,
+      });
+      // The frozen last frame must not keep covering the webview while the
+      // desktop is gone (KI-035 symptom).
+      if (get().activeId === id) {
+        void gateway.focus(null);
+      }
+      setTimeout(() => {
+        const cur = get().sessions[id];
+        // Skip only when the session was re-registered (the wizard opened a
+        // fresh desktop); a store still showing "running" while the backend
+        // died MUST be force-repaired.
+        if (cur && (cur.retryPending || cur.phase !== "running")) {
+          void relaunch(id, true, false);
+        }
+      }, delay);
+    };
+
     /** Desktop ended cleanly → keep the tab, hide the (now stale) view. */
     const markExitedClean = (id: string) => {
       patch(id, { phase: "ready", retries: 0, retryPending: false });
@@ -159,24 +218,12 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
       }
     };
 
-    /** Desktop exited WITH an error → bounded auto-relaunch (legacy parity). */
+    /** Desktop exited WITH an error → the unified bounded reconnect chain
+     * (KI-036: a Jetson reboot keeps reconnecting until it is back; legacy
+     * parity for the fast first attempts, e.g. macOS Local Network
+     * permission). */
     const handleFailedExit = (id: string) => {
-      const session = get().sessions[id];
-      if (!session) return;
-      if (session.retries >= MAX_RDP_RETRIES) {
-        patch(id, { retries: 0, retryPending: false, phase: "error" });
-        if (get().activeId === id) {
-          set({ activeId: null });
-          void gateway.focus(null);
-        }
-        return;
-      }
-      if (!session.retryPending) {
-        patch(id, { retryPending: true, retries: session.retries + 1 });
-        setTimeout(() => {
-          if (get().sessions[id]) void relaunch(id, true, false);
-        }, RETRY_DELAY_MS);
-      }
+      scheduleReconnect(id);
     };
 
     return {
@@ -216,6 +263,9 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
           void gateway.focus(id);
           return;
         }
+        // User-initiated retry after a capped/failed chain: start fresh so
+        // the full reconnect budget is available again (KI-036).
+        patch(id, { retries: 0, retryPending: false });
         void relaunch(id);
       },
 
@@ -269,6 +319,11 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
         for (const id of ids) {
           const session = get().sessions[id];
           if (!session) continue;
+          // A reconnect is already scheduled (KI-036): the backend has no
+          // session yet by design — must not reset the chain via
+          // markExitedClean (retries→0 would make it infinite) nor
+          // double-schedule via handleFailedExit.
+          if (session.retryPending) continue;
           const status = byId.get(id);
 
           if (!status || status.kind === "notRunning") {

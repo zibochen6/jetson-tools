@@ -38,6 +38,12 @@ pub struct EnvironmentFacts {
     pub xrdp_in_ssl_cert_group: bool,
     pub session_configured: bool,
     pub xsessionrc_ok: bool,
+    /// KI-038: xrdp 0.9.17 dials sesman via `::1` first (non-blocking connect
+    /// returns EINPROGRESS and it reports "in progress"), so a loopback without
+    /// `::1` — the classic sysctl `disable_ipv6=1` aftermath — leaves xrdp
+    /// permanently unable to reach sesman even though 3350 is listening.
+    #[serde(default)]
+    pub lo_ipv6_loopback: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,6 +92,12 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
     if !facts.xsessionrc_ok {
         issues.push(".xsessionrc has a shell syntax error".into());
     }
+    if !facts.lo_ipv6_loopback {
+        issues.push(
+            "IPv6 loopback (::1) is missing on lo — xrdp cannot reach sesman (KI-038)"
+                .into(),
+        );
+    }
 
     let any_installed = facts.xrdp_installed || facts.xorgxrdp_installed || facts.xfce_installed;
     let all_components = facts.xrdp_installed && facts.xorgxrdp_installed && facts.xfce_installed;
@@ -94,7 +106,8 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
         && facts.xrdp_sesman_active
         && facts.port_3389_listening
         && facts.port_3350_listening
-        && facts.xrdp_in_ssl_cert_group;
+        && facts.xrdp_in_ssl_cert_group
+        && facts.lo_ipv6_loopback;
 
     let state = if all_components && service_ok && facts.session_configured && facts.xsessionrc_ok {
         RemoteEnvironmentState::Ready
@@ -159,6 +172,7 @@ mod tests {
             xrdp_in_ssl_cert_group: true,
             session_configured: true,
             xsessionrc_ok: true,
+            lo_ipv6_loopback: true,
         };
         overrides(&mut f);
         f
@@ -212,6 +226,15 @@ mod tests {
     fn classifies_broken_when_xsessionrc_broken() {
         let f = facts(|f| f.xsessionrc_ok = false);
         assert_eq!(classify(&f).state, RemoteEnvironmentState::Broken);
+    }
+
+    #[test]
+    fn classifies_broken_when_ipv6_loopback_missing() {
+        // KI-038: services all "look" healthy yet xrdp can never reach sesman.
+        let f = facts(|f| f.lo_ipv6_loopback = false);
+        let report = classify(&f);
+        assert_eq!(report.state, RemoteEnvironmentState::Broken);
+        assert!(report.issues.iter().any(|issue| issue.contains("KI-038")));
     }
 
     #[test]

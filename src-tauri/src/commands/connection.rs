@@ -48,6 +48,10 @@ pub enum ProbeResult {
 pub enum ProbeErrorCode {
     SshTimeout,
     ConnectionRefused,
+    /// KI-036: tunnel-side setup failure (port allocation / ssh exit / setup) —
+    /// its own code so the frontend can retry and try the next address path
+    /// instead of dead-ending under `unknown`.
+    TunnelFailed,
     AuthenticationFailed,
     SshProtocolError,
     RemoteCommandFailed,
@@ -198,8 +202,8 @@ pub async fn probe_device(
 
     // 2. Dial the ephemeral wire endpoint but scope TOFU to the real Jetson.
     eprintln!("[jr-flow] probe connecting...");
-    let mut session = match connect_with_stable_identity(&wire, &input, &mut store, &config).await?
-    {
+    let mut session =
+        match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await? {
         ssh::SshConnectOutcome::Connected(s) => s,
         ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(ProbeResult::HostKeyUnknown { key });
@@ -331,17 +335,17 @@ fn map_tunnel_error(e: TunnelError) -> ProbeError {
             code,
         ),
         TunnelError::LocalPort(m) => ProbeError::with_detail(
-            ProbeErrorCode::Unknown,
+            ProbeErrorCode::TunnelFailed,
             "Secure tunnel could not be established",
             format!("{code}: {m}"),
         ),
         TunnelError::SshExited(m) => ProbeError::with_detail(
-            ProbeErrorCode::Unknown,
+            ProbeErrorCode::TunnelFailed,
             "Secure tunnel could not be established",
             format!("{code}: {m}"),
         ),
         TunnelError::Setup(m) => ProbeError::with_detail(
-            ProbeErrorCode::Unknown,
+            ProbeErrorCode::TunnelFailed,
             "Secure tunnel could not be established",
             format!("{code}: {m}"),
         ),
@@ -394,6 +398,33 @@ async fn connect_with_stable_identity(
         }
     }
     Ok(outcome)
+}
+
+/// Dial the tunnel's loopback endpoint with KI-036 hardening: on an
+/// unreachable-class failure, drop the tunnel for this device BEFORE
+/// returning, so the next connect/Retry spawns a fresh ssh instead of
+/// recycling the half-open one (Jetson rebooted; the local ssh child can
+/// linger up to ServerAliveInterval×CountMax ≈ 45s while the loopback
+/// forwards still accept locally).
+async fn connect_via_tunnel(
+    tunnels: &TunnelManager,
+    input: &SshConnectionInput,
+    wire: &SshConnectionInput,
+    store: &mut TrustStoreFile,
+    config: &SshConfig,
+) -> Result<ssh::SshConnectOutcome, ProbeError> {
+    let outcome = connect_with_stable_identity(wire, input, store, config).await;
+    if let Err(e) = &outcome {
+        if matches!(
+            e.code,
+            ProbeErrorCode::SshTimeout | ProbeErrorCode::ConnectionRefused
+        ) {
+            let manager = tunnels.clone();
+            let key = device_key(input);
+            let _ = tokio::task::spawn_blocking(move || manager.invalidate(&key)).await;
+        }
+    }
+    outcome
 }
 
 /// Establish (or reuse) the in-app loopback tunnel off the async runtime —
@@ -475,8 +506,8 @@ pub async fn prepare_remote_desktop(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    let mut session = match connect_with_stable_identity(&wire, &input, &mut store, &config).await?
-    {
+    let mut session =
+        match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await? {
         ssh::SshConnectOutcome::Connected(s) => s,
         ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(PrepareResult::HostKeyUnknown { key });

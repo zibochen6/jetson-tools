@@ -259,7 +259,9 @@ async fn wait_for_usable_desktop(
 /// Recover the specific XRDP failure where the transport is alive but sesman
 /// never produces a desktop. This is intentionally narrower than bootstrap:
 /// packages/configuration already passed verification, so only the two
-/// coupled services are restarted. The real password travels over SSH stdin.
+/// coupled services are restarted AND stale Xorg sessions cleared — restarting
+/// xrdp alone never kills existing sessions, so a re-connect would land back
+/// on the same blocked session. The real password travels over SSH stdin.
 async fn restart_remote_desktop_services(
     app: &AppHandle,
     endpoints: &TunnelEndpoints,
@@ -303,14 +305,14 @@ async fn restart_remote_desktop_services(
     let input = format!("{password}\n");
     let result = session
         .exec_with_stdin(
-            "sudo -S -p '' systemctl restart xrdp-sesman xrdp",
+            "sudo -S -p '' systemctl restart xrdp-sesman xrdp; rc=$?; pkill -f '^/usr/lib/xorg/Xorg :1[0-9]' 2>/dev/null; exit $rc",
             input.as_bytes(),
         )
         .await
         .map_err(|_| map_rdp_error(RdpError::Unknown))?;
     match result.exit_code {
         Some(0) | None => {
-            eprintln!("[jr-flow] XRDP services restarted after no-desktop timeout");
+            eprintln!("[jr-flow] XRDP services restarted and stale sessions cleared after no-desktop timeout");
             Ok(())
         }
         Some(_) => Err(map_rdp_error(RdpError::Unknown)),

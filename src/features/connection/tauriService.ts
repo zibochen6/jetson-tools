@@ -36,6 +36,7 @@ type ProbeErrorCode =
   | "PROVISION_TIMEOUT"
   | "VERIFICATION_FAILED"
   | "SAVED_PASSWORD_MISSING"
+  | "TUNNEL_FAILED"
   | "CANCELLED"
   | "UNKNOWN";
 
@@ -53,6 +54,7 @@ const CODE_MAP: Record<IpcErrorCode, ConnectionErrorCode> = {
   PROVISION_TIMEOUT: "provision_failed",
   VERIFICATION_FAILED: "verification_failed",
   SAVED_PASSWORD_MISSING: "saved_password_missing",
+  TUNNEL_FAILED: "tunnel_failed",
   CANCELLED: "unknown",
   UNKNOWN: "unknown",
   RDP_CLIENT_NOT_FOUND: "rdp_client_missing",
@@ -60,7 +62,10 @@ const CODE_MAP: Record<IpcErrorCode, ConnectionErrorCode> = {
   RDP_LAUNCH_FAILED: "rdp_failed",
   RDP_AUTHENTICATION_FAILED: "rdp_failed",
   RDP_CERTIFICATE_CHANGED: "rdp_failed",
-  RDP_CONNECTION_FAILED: "rdp_failed",
+  // Unreachable-class launch failure: its own code so the sessions store can
+  // keep reconnecting while the Jetson reboots (KI-036) instead of
+  // dead-ending the tab under the generic rdp_failed.
+  RDP_CONNECTION_FAILED: "rdp_connection_failed",
   RDP_PROCESS_CRASHED: "rdp_failed",
   RDP_PASSWORD_MISSING: "saved_password_missing",
   RDP_ALREADY_RUNNING: "rdp_failed",
