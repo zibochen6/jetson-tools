@@ -74,3 +74,4 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore
   - 开发版（`tauri dev`）只提示新版本并给下载页链接，不做自替换。
   - 更新只支持文本应用替换：仅在本机 `/Applications` 或 `~/Applications` 中**已安装 app 形态**运行时生效。
 - **隧道**：app 用系统 `/usr/bin/ssh` 自动建立环回隧道（SSH/RDP 双平面走 127.0.0.1，规避 macOS 本地网络隐私限制 KI-004，见 KI-021），无需手动配置；密码仅经 0700 目录里的 `SSH_ASKPASS` 脚本传递。
+- **签名（macOS 15+/27 必读）**：本地网络授权要求带 Team ID 的正式签名，ad-hoc 构建的 LAN 腿会被 TCC 静默拒绝（「No route to host」，KI-039）。本机 `tauri.conf.json` 已配置 `bundle.macOS`（signingIdentity/entitlements/hardenedRuntime）——**该 signingIdentity 是机器特定证书**：换机、证书到期（一年）需更新其 SHA-1；推 GitHub Actions 发版前需处理 CI 签名（否则缺少该证书会构建失败，见 KI-039 维护纪律）。

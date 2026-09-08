@@ -43,6 +43,19 @@ const PROCESS_EXIT_GRACE: Duration = Duration::from_millis(750);
 const STDERR_SUMMARY_LIMIT: usize = 240;
 static NEXT_SECRET_DIR: AtomicU64 = AtomicU64::new(0);
 
+/// A transient "route not up yet" tunnel failure is retried this many times
+/// total (1 initial attempt + `UNREACHABLE_MAX_RETRIES` retries).
+const UNREACHABLE_MAX_RETRIES: usize = 3;
+/// Backoff between retries, indexed 0..len. Kept short so a genuinely wrong
+/// IP still fails fast, but long enough to ride out the macOS Internet Sharing
+/// bridge (bridge100) installing its `192.168.x.0/24` route right after the
+/// Jetson's USB-C link is plugged in.
+const UNREACHABLE_RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+
 /// Loopback endpoints the planes must use instead of the LAN host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TunnelEndpoints {
@@ -301,7 +314,8 @@ impl TunnelManager {
         }
 
         eprintln!("[jr-flow] tunnel ensure result=spawning key={key} host={host} user={username}");
-        let tunnel = spawn_tunnel(app, host, remote_ssh_port, username, password).map_err(|e| {
+        let tunnel =
+            spawn_tunnel_with_retry(app, host, remote_ssh_port, username, password).map_err(|e| {
             // Every spawn failure lands here (pre-loop setup errors AND
             // loop exits) — the log is the only post-mortem surface.
             eprintln!(
@@ -691,6 +705,50 @@ fn spawn_tunnel(
     }
 }
 
+/// Is this tunnel failure the transient "route/connect is not up yet" class?
+/// Only `Unreachable` (No route to host / network unreachable / connect
+/// timeout / startup deadline) is retried. Auth, local-port, ssh-exit and
+/// setup failures are deterministic and must fail fast — never masked by a
+/// retry loop.
+fn is_retryable_tunnel_error(err: &TunnelError) -> bool {
+    matches!(err, TunnelError::Unreachable)
+}
+
+/// Spawn a tunnel, retrying the transient `Unreachable` class a bounded number
+/// of times with backoff. The macOS Internet Sharing bridge (bridge100) that
+/// carries a USB-C-connected Jetson's LAN link can take several seconds to
+/// install its `192.168.x.0/24` route right after plug-in, so a single
+/// "No route to host" must not hard-fail the connect wizard.
+fn spawn_tunnel_with_retry(
+    app: &AppHandle,
+    host: &str,
+    remote_ssh_port: u16,
+    username: &str,
+    password: &str,
+) -> Result<ActiveTunnel, TunnelError> {
+    let mut retried = 0usize;
+    loop {
+        let result = spawn_tunnel(app, host, remote_ssh_port, username, password);
+        let retryable = match &result {
+            Err(e) if is_retryable_tunnel_error(e) => retried < UNREACHABLE_MAX_RETRIES,
+            _ => false,
+        };
+        if retryable {
+            let delay = UNREACHABLE_RETRY_BACKOFF[retried];
+            eprintln!(
+                "[jr-flow] tunnel unreachable retry {}/{} host={host} backoff_ms={}",
+                retried + 1,
+                UNREACHABLE_MAX_RETRIES,
+                delay.as_millis()
+            );
+            std::thread::sleep(delay);
+            retried += 1;
+            continue;
+        }
+        return result;
+    }
+}
+
 fn drain_stderr(child: &mut Child) -> String {
     let mut buf = String::new();
     if let Some(mut err) = child.stderr.take() {
@@ -802,6 +860,39 @@ mod tests {
             TunnelError::SshExited(m) => assert!(m.contains("Address already in use")),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn classify_exit_maps_transient_unreachable_variants() {
+        // Every transient route/timing shape the retry loop must ride out maps
+        // to the single retryable class `Unreachable`.
+        for stderr in [
+            "ssh: connect to host 192.168.2.20 port 22: No route to host",
+            "ssh: connect to host 10.0.0.9 port 22: Network is unreachable",
+            "ssh: connect to host 10.0.0.9 port 22: Operation timed out",
+            "ssh: connect to host 10.0.0.9 port 22: Connection timed out",
+        ] {
+            assert!(
+                matches!(classify_exit(stderr, Some(255)), TunnelError::Unreachable),
+                "expected Unreachable for {stderr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_unreachable_is_retryable() {
+        assert!(is_retryable_tunnel_error(&TunnelError::Unreachable));
+        assert!(!is_retryable_tunnel_error(&TunnelError::AuthFailed));
+        assert!(!is_retryable_tunnel_error(&TunnelError::LocalPort(
+            "x".into()
+        )));
+        assert!(!is_retryable_tunnel_error(&TunnelError::SshExited(
+            "ssh exited 255".into()
+        )));
+        assert!(!is_retryable_tunnel_error(&TunnelError::ExternalSingleDevice));
+        assert!(!is_retryable_tunnel_error(&TunnelError::Setup(
+            "spawn".into()
+        )));
     }
 
     #[test]

@@ -34,6 +34,7 @@
 - **缓解（dev，已实现，2026-09-01）**：dev tunnel 模式——设置 `VITE_JR_SSH_PORT`（可选 `VITE_JR_RDP_PORT`，默认 3389）后，SSH 控制面与 RDP 面一律路由到 `127.0.0.1` 回环隧道，用户输入的 LAN IP 仅保留为设备标识/展示；底栏显示 `TUNNEL 127.0.0.1:<ssh> / 127.0.0.1:<rdp>` 徽标。配合 `ssh -L 2222:localhost:22 -L 3389:localhost:3389` 隧道，未签名 dev 二进制即可全链路连通（真机验证：SSH 握手/检测、embedded RDP 重连 :10 均通过；首连 127.0.0.1:<port> 会触发 TOFU 信任提示，属预期）。
 - **诊断工具**：`cargo run --bin network_probe -- <host> <port>`（原样透传 errno）；dev-only GUI 触发见 `DevNetworkProbe.tsx`。
 - **状态**：开放（P0 平台限制；0.2.1 起 release 由 app 自建环回隧道绕过（KI-021），不再依赖手动隧道；直连路线仍待 Team ID 签名）。
+- **更新（2026-09-08）**：KI-021 的「子进程 ssh 绕过」在 macOS 15+/27 同样失效（responsible-process 归属，见 KI-039）；候选路线①（免费 Personal Team 正式签名）已落地并真机验证通过（KI-039）。
 
 ## KI-005 — apt 源域名受网络环境 fake-ip 影响
 - **现象**：`archive.ubuntu.com` 解析到 `198.18.1.69`（Clash fake-ip）。
@@ -310,3 +311,25 @@
   - `check-environment.sh` 新增 `lo_ipv6_loopback` 事实；Rust `classify` 将其纳入 service_ok（缺失 → Broken → 走自愈装机）。
   - `bootstrap.sh` 新增幂等步骤：注释 sysctl 中的 disable_ipv6 行（带 KI-038 标记）+ 运行时恢复 + 兜底显式加回 `::1/128`。
 - **状态**：✅ 真机（robotics 32G）验证：修复 lo 的 ::1 后桌面恢复；自愈逻辑单测覆盖（classify broken + ENV 字段）。
+
+## KI-039 — macOS 本地网络 TCC 连「系统 ssh 子进程隧道」也拦：ad-hoc 签名 APP 直连 LAN 全链路被拒（已修复，正式签名）
+
+- **症状（2026-09-08 真机）**：App 连 LAN IP（`192.168.2.20`）必现「Couldn't reach this Jetson / TUNNEL_TARGET_UNREACHABLE」；同一时刻终端 `ssh seeed@192.168.2.20` 正常；同一台设备走 Tailscale（`100.114.170.49`，非本地网络）App 也能连。`tunnel.rs` 的瞬时重试（2s/4s/8s×3）无效——**确定性拒绝，不是瞬时路由**。
+- **根因（对 KI-004/KI-021 的更新认知）**：
+  1. KI-021 的绕过（app spawn 系统 `/usr/bin/ssh` 做 LAN 腿）在 macOS 15+/27 上已失效：本地网络 TCC 按 **responsible process** 把 ssh **子进程**的连接归属回 App，Apple 签名的子进程不再免疫。
+  2. 归属回 App 后，ad-hoc 签名 App 没有 `application-identifier` 授权身份（无 Team ID）→ `nehelper` 显式报 `not platform entitled and no application ID is set, permission denied` → connect() 得 `EHOSTUNREACH(errno 65)`，OpenSSH 表面话术即 **"No route to host"**。
+- **实锤链条**：
+  - `~/Library/Logs/jetson-remote.log`：`tunnel ssh exited Some(255): ssh: connect to host 192.168.2.20 port 22: No route to host`，重试 3 次逐行同错。
+  - `log show --style compact --last 20m --predicate 'eventMessage CONTAINS "LocalNetwork"'`：`UserEventAgent: not platform entitled and no application ID is set, permission denied`。
+  - `codesign -dv /Applications/Jetson Remote.app`：`Signature=adhoc` / `TeamIdentifier=not set` / `Info.plist=not bound`。
+- **修复（2026-09-08 真机验证：隧道 `192.168.2.1→192.168.2.20:22 ESTABLISHED`，2222/3389 双平面通过）**：
+  1. **正式签名（KI-004 候选路线①落地）**：Xcode → Settings → Apple Accounts 登录 Apple ID（免费 Personal Team，Team ID `9Y4B7WBUU2`）→ 生成 "Apple Development" 证书。
+  2. **修证书信任链**：本机密钥链里的 `Apple Worldwide Developer Relations Certification Authority`（2013–2023）**已过期**，导致新证 `security find-identity -v` 报 0 valid、codesign 报 `unable to build chain`；从 Apple 下载安装 `AppleWWDRCAG3.cer`（2020–2030）后恢复 1 valid。
+  3. **`tauri.conf.json`**：`bundle.macOS.signingIdentity` = 该证书 SHA-1；`entitlements` = `entitlements.plist`（内含 `com.apple.application-identifier = <TeamID>.com.jetsonremote.app`——nehelper 要的 "application ID" 就是它）；**`hardenedRuntime = false`（必须）**：开启 hardened runtime 会启用 library 校验，拒绝加载 Homebrew FreeRDP dylib（`mapping process and mapped file (non-platform) have different Team IDs`），App dyld 直接 `Abort trap: 6` 崩溃——正式签名反而起不来的坑。
+  4. 重建 → 替换 /Applications → 重启；首次连 LAN 弹「本地网络」授权 → 允许 → 永久记住（TCC 按 Team ID + bundle id 记）。
+- **预防复发（维护纪律）**：
+  - Apple Development 证书一年有效（本次 2027-09-08 到期）。到期后在 Xcode 重新生成证书，并把 `tauri.conf.json` 的 `signingIdentity` SHA-1 同步更新（或改用证书 CN）；`security find-identity -v -p codesigning` 是 0 valid 时先查 WWDR 链是否过期（KI 本条目第 2 条）。
+  - `signingIdentity` 是**机器特定**的：推给 GitHub Actions 构建 release 前必须处理（CI 无此证书会构建失败；CI 需 `APPLE_SIGNING_IDENTITY`/证书 secrets 或临时移除该段回退 ad-hoc）。
+  - 只要 App 还运行时链接 Homebrew FreeRDP（`libfreerdp-client3.3.dylib`），`hardenedRuntime` 必须保持 `false`。
+  - **三问速判**：终端 ssh 同 IP 通？App 连 Tailscale(100.x) 通？`codesign -dv` 无 Team ID？三连全中 = 本条目（本地网络 TCC + 无签名身份），别再当网络/路由问题修。
+- **状态**：✅ 已修复并真机验证（2026-09-08，192.168.2.20 直连桌面正常）。

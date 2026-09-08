@@ -3,9 +3,14 @@ name: release
 # Build & publish the macOS app on tag push (v*). The tag commit must have
 # bumped the version in src-tauri/Cargo.toml + tauri.conf.json + package.json.
 #
-# NOTE: unsigned builds are blocked from direct LAN sockets by macOS local-
-# network privacy (KI-004); since 0.2.1 the app creates its own loopback
-# tunnel via the system ssh (KI-021), so no port routing is baked in anymore.
+# Since 0.3.8 the app is signed with the Apple Development certificate
+# (Team 9Y4B7WBUU2) imported from repo secrets, so it carries a Team ID and a
+# com.apple.application-identifier entitlement. macOS 15+/27 "Local Network"
+# privacy silently blocks LAN connections from ad-hoc-signed apps ("no
+# application ID" → "No route to host", KI-039); the in-app /usr/bin/ssh tunnel
+# (KI-021) does NOT bypass this because the child ssh is attributed to the
+# responsible app. hardenedRuntime stays off so the Homebrew FreeRDP dylib
+# still loads (library validation would abort at launch otherwise).
 
 on:
   push:
@@ -35,6 +40,30 @@ jobs:
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
+
+      - name: Import Apple Development signing certificate (KI-039)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/build_certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Install Apple WWDR G3 CA (KI-039 trust chain)
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          curl -sSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" \
+            "https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+          security add-certificates -k "$KEYCHAIN_PATH" "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
       - name: Build app + dmg
         run: pnpm tauri build

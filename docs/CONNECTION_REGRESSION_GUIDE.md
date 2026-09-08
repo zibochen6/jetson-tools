@@ -73,7 +73,7 @@ xrdp 对 `TS_POINTER_EVENT` 的解析（v0.9.17 `xrdp/xrdp_wm.c::xrdp_wm_process
 ### 2.4 其他不变量
 
 - **分辨率 = 会话级**：会话分辨率在 xrdp 登录时确定（`session.rs desktop_size_for`），改窗口大小不会自动调；同用户重连会**复用旧会话**，改几何/`.xsession` 必须杀旧会话重建（`pkill -f '^/usr/lib/xorg/Xorg :10'`，**必须带锚点**，否则自杀——顺手杀掉包含同样字符串的自身 ssh 脚本）。
-- **in-app 环回隧道（KI-021）**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。0.2.1 起后端用系统 `/usr/bin/ssh` 自建隧道，SSH/RDP 双平面一律走 127.0.0.1；本地端口优先 2222/3389（信任库按 wire host:port 计，端口稳定）。dev 仅可用编译期 `VITE_JR_SSH_PORT` 复用外部隧道；改 `tunnel.rs` / `tauriService.ts` 路由逻辑重看 KI-004/KI-021。
+- **in-app 环回隧道（KI-021）**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。0.2.1 起后端用系统 `/usr/bin/ssh` 自建隧道，SSH/RDP 双平面一律走 127.0.0.1；本地端口优先 2222/3389（信任库按 wire host:port 计，端口稳定）。dev 仅可用编译期 `VITE_JR_SSH_PORT` 复用外部隧道；改 `tunnel.rs` / `tauriService.ts` 路由逻辑重看 KI-004/KI-021。**⚠️ macOS 15+/27 起，本地网络 TCC 按 responsible process 把子进程 `/usr/bin/ssh` 的 LAN 连接归属回 App：App 未正式签名（无 Team ID）时该隧道 LAN 腿照样被拒（"no application ID" → "No route to host"），绕过失效（KI-039）；正式签名后恢复。签名相关见 `tauri.conf.json` 的 `bundle.macOS`（signingIdentity/entitlements/hardenedRuntime）与 KI-039 维护纪律。**
 - **RDPGFX 接线**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 是黑屏根因（KI-013）——通道接线逻辑动它前必须理解。
 - **杀会话用锚定模式**：`pkill -f "^/usr/lib/xorg/Xorg :10"`；裸 `pkill -f "Xorg :10"` 会匹配自身 ssh 命令行自杀。
 - **修饰键状态同步（KI-023）**：Cmd（→Super，0x5B/0x5C, E0）的 `flagsChanged` 松开事件可能被 macOS 系统快捷键路径吞掉（Cmd+Tab 切应用、Cmd+Q 退出、Cmd+空格 Spotlight），远端 Xorg 会永远认为 Super 按住；xrdp 常驻 X 会话跨重连保留卡键态，于是「一连上就复现」：**e → 打开 Thunar（Super+E）、空格 → 被输入法切换快捷键吃掉**。改 `macos_view.m` 的 `flagsChanged`/焦点处理或 `bridge.c` 的键盘发送前必读本条目：连接建立（PostConnect）、输入 attach（含 Tab refocus）、窗口/应用焦点变化必须调用 `jr_session_reset_keyboard_modifiers`（释放全部修饰键，幂等），且不得在焦点恢复时反向补发「仍按住」的修饰键（AppKit 无 L/R 区分，补发可能制造新的卡键）。
@@ -220,6 +220,7 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | KI-025 | Tab 被遮挡；显示 running 但纯白 | 原生视图漏算 macOS safe area；sesman 假健康且启动未等真实首帧 | 已修复（safe area + 首帧门槛 + 服务自愈） |
 | KI-036 | Jetson 断电重启后反复“Couldn't reach this Jetson” | **半开隧道被当健康复用** | 已修复（端到端 banner 健康检查 + 失败即废弃） |
 | KI-038 | 设备重启后 RDP 握手成功但桌面永不起，xrdp 报 Error connecting to sesman | **sysctl 禁用 IPv6 抹掉 lo 的 ::1，xrdp connect_loopback 死锁** | 已自愈（checker 检测 + bootstrap 修复） |
+| KI-039 | 终端 ssh 通、App 连 LAN 必现 "Couldn't reach this Jetson"（Tailscale 却通） | **macOS 本地网络 TCC："no application ID"（ad-hoc 无 Team ID）拒 LAN 腿，KI-021 子进程 ssh 绕过失效** | 已修复（Personal Team 正式签名 + application-identifier entitlement + hardenedRuntime=false） |
 | 新 | 新症状… | 待分析 | |
 
 ※ KI 详文见 `docs/KNOWN_ISSUES.md`；嵌入式设计见 `docs/EMBEDDED_RDP.md`。
@@ -237,4 +238,4 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 
 - 改 `flagsChanged` 或新增 reset 调用点时，先跑设备侧地面真值：`DISPLAY=:10.0 xinput query-state <键盘设备id>` 空闲时 `down:` 列表不应有 Super_L(133)；有即卡键。
 
-*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量。*
+*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量；2026-09-08 增补 KI-039（本地网络 TCC 拦截链路 / 正式签名落地）与 §2.4 隧道签名警示。*

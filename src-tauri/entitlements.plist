@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Grants the app a stable application-identifier (TeamID + bundle id) so
+	     macOS can attribute and authorize its "Local Network" (TCC) access.
+	     Without this, an ad-hoc-signed app is denied LAN connectivity with
+	     "No route to host" on macOS 15+ ("no application ID is set"). -->
+	<key>com.apple.application-identifier</key>
+	<string>9Y4B7WBUU2.com.jetsonremote.app</string>
+</dict>
+</plist>
