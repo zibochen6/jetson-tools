@@ -47,6 +47,9 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
+          # The p12 exports with its full trust chain (Apple Development →
+          # WWDR G3 → Apple Root CA), so this single import makes the identity
+          # valid on the runner; no separate CA download is needed (KI-039).
           CERT_PATH="$RUNNER_TEMP/build_certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
           echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
@@ -57,13 +60,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
-      - name: Install Apple WWDR G3 CA (KI-039 trust chain)
-        run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
-          curl -sSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" \
-            "https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
-          security add-certificates -k "$KEYCHAIN_PATH" "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
       - name: Build app + dmg
         run: pnpm tauri build
