@@ -120,3 +120,17 @@ src-tauri/
 - Mac→远程：粘贴板变化 → ClientFormatList{CF_TEXT,CF_UNICODETEXT} → 远端粘贴时 ServerFormatDataRequest(13/1) → 应 UTF-16LE（带 null 终止）/ASCII。
 
 **踩坑**：PubSub 回调第二参数语义——handler 收到的 `context` 是 `rdpContext*`（事件发布方传 `instance->context`），切不可当 `freerdp*` cast；签名错了读出的 session 是垃圾值且表现为"静默不接线"。
+
+## 11. 接口冻结层 + 真机接线清单（2026-09-08，session arch 任务一期）
+
+**已落地（src-tauri/src/session/）**：`RdpEngine` trait（start/stop/resize/set_focus/send_input/set_clipboard/health，opaque handle，零 FreeRDP/AppKit 类型泄漏）、`RdpEngineEvent` 事件面、`SessionManager`（focus 独占/剪贴板所有权/确定性清理顺序/attempt 代际/stale 回调丢弃）、`FakeRdpAdapter`（scenario 脚本 + 调用审计，19 生命周期用例全绿）、`FreeRdpEngineAdapter`（编译链接绑定现有 RdpSessionManager，**未切流量**）。
+
+**真机接线清单（接手时依次执行，每步真机回归）**：
+1. commands/rdp.rs 的 `launch_session/close_session/focus_session` 内部改为经 `SessionManager<RdpEngine>` 编排（保留 IPC 语义不变）。
+2. 前端 IPC 收敛：消灭 `rdp_send_*`/`freerdp_*` 泄漏，只留 session_connect/disconnect/reconnect/set_active/resize/get_snapshot；Rust 发 `session_snapshot_changed` 事件投影。
+3. NativeSurfaceHost 拆分（surface.rs：create/attach/detach/resize/destroy），bridge 只拿 handle。
+4. SessionRuntimeState{ssh,provision,tunnel,rdp} + derive_connection_state() 对外投影（UI ConnectionState 枚举不变）。
+5. FreeRdpEngineAdapter 填空：start 委托 launch_keyed（含 4s 有界 join，KI-041）、stop→close_keyed、set_focus→focus/unfocus、health→status_keyed+usable_frame。
+6. 完成 r2 §4.16「完成即停」验收（fake 全绿 + 真实 adapter 编译 + 真机会话 smoke）。
+
+**完成前禁止动的心脏命令**：`launch_keyed`/`close_keyed` 的 stop-before-start 顺序、`RdpSession::shutdown` 的 4s 有界 join（KI-041）、`jr_clipboard_sync_start/stop` 的焦点迁移（KI-022/040）、bridge 的单 owner 命令队列（KI-027）。

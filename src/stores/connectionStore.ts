@@ -5,6 +5,7 @@ import {
   ConnectionInput,
   ConnectionProgress,
   ConnectionState,
+  ConnectionTraceEntry,
   describeError,
   HostKeyDecision,
   HostKeyInfo,
@@ -53,6 +54,17 @@ export interface ConnectionStore {
   scenario: MockScenario;
   /** Dev/prod toggle over the connection backend. */
   mode: "real" | "mock";
+  /**
+   * Reliability Harness: connection attempt generation, bumped on every
+   * `connect()`. Async callbacks capture their generation and discard
+   * themselves when superseded (stale-result guard).
+   */
+  attemptId: number;
+  /**
+   * Reliability Harness: ring buffer of the latest connection phase
+   * transitions (newest last, capped at 200). Diagnostic only.
+   */
+  trace: ConnectionTraceEntry[];
 
   /**
    * Remembered devices (identity-v3), most recently connected first.
@@ -246,6 +258,8 @@ export function createConnectionStore(
   let rdpRetryCount = 0;
   let rdpRetryPending = false;
   const MAX_RDP_RETRIES = 5;
+  /** Max trace entries kept per store (Reliability Harness ring buffer). */
+  const TRACE_LIMIT = 200;
 
   return create<ConnectionStore>()((set, get) => {
     const resolveService = (): ConnectionService => {
@@ -257,6 +271,16 @@ export function createConnectionStore(
 
     const resolveMemory = (): DeviceMemoryGateway =>
       injectedMemory ?? new TauriDeviceMemoryGateway();
+
+    /** Append a phase transition to the ring-buffered connection trace. */
+    const recordTrace = (state: ConnectionState): void => {
+      set((s) => ({
+        trace: [
+          ...s.trace.slice(-(TRACE_LIMIT - 1)),
+          { attemptId: s.attemptId, state, t: Date.now() },
+        ],
+      }));
+    };
 
     /**
      * Candidate addresses for this connect: the typed entry host plus every
@@ -336,6 +360,12 @@ export function createConnectionStore(
       abort = new AbortController();
       const signal = abort.signal;
 
+      // Reliability Harness: a fresh generation per attempt; every async
+      // resume point below checks it so stale callbacks can never clobber a
+      // newer attempt (KI-024/036 class of bugs).
+      const attempt = get().attemptId + 1;
+      set({ attemptId: attempt, trace: [] });
+
       set({
         state: "connecting_ssh",
         progress: { state: "connecting_ssh", message: "Connecting to Jetson" },
@@ -349,6 +379,7 @@ export function createConnectionStore(
         lastFailure: null,
         notice: null,
       });
+      recordTrace("connecting_ssh");
 
       currentService = resolveService();
       const service = currentService;
@@ -357,7 +388,7 @@ export function createConnectionStore(
       const candidates = decision && pendingDecisionHost
         ? [pendingDecisionHost]
         : await candidatesFor(form, saved, signal);
-      if (signal.aborted) return;
+      if (signal.aborted || get().attemptId !== attempt) return;
 
       let lastError: ConnectionFailure | null = null;
       let connected: { device: JetsonDevice; input: ConnectionInput } | null =
@@ -378,12 +409,13 @@ export function createConnectionStore(
             signal,
             hostKeyDecision: decision,
             onProgress: (p) => {
-              if (signal.aborted) return;
+              if (signal.aborted || get().attemptId !== attempt) return;
               set({ state: p.state, progress: p });
+              recordTrace(p.state);
             },
           });
 
-          if (signal.aborted) return;
+          if (signal.aborted || get().attemptId !== attempt) return;
 
           switch (outcome.kind) {
             case "device":
@@ -412,6 +444,9 @@ export function createConnectionStore(
           }
           break; // connected or handled above
         } catch (err) {
+          // Superseded by a newer attempt → this attempt must go silent
+          // (its signal was aborted by the next doConnect; double-check).
+          if (get().attemptId !== attempt) return;
           if (signal.aborted || isAbortError(err)) {
             set({
               state: "idle",
@@ -430,7 +465,10 @@ export function createConnectionStore(
           if (RETRYABLE_CANDIDATE_CODES.has(failure.code)) {
             continue;
           }
-          throw failure;
+          // Non-retryable (device-level verdict): converge to the terminal
+          // error path below instead of throwing an unhandled rejection
+          // (Reliability scenario: unrecoverable errors must not leak).
+          break;
         }
       }
 
@@ -500,7 +538,7 @@ export function createConnectionStore(
       // refreshed from what the device just reported).
       syncMemoryAfterConnect(input, device, savedNow?.displayName ?? null);
 
-      await prepareAndLaunch(service, input, scenario, signal);
+      await prepareAndLaunch(service, input, scenario, signal, attempt);
     };
 
     /**
@@ -513,6 +551,7 @@ export function createConnectionStore(
       input: ConnectionInput,
       scenario: MockScenario,
       signal: AbortSignal,
+      attempt: number,
     ): Promise<void> => {
       set({
         state: "checking_environment",
@@ -521,9 +560,12 @@ export function createConnectionStore(
           message: "Checking remote desktop",
         },
       });
+      recordTrace("checking_environment");
       try {
         await prepareDevice(service, input, scenario, signal);
       } catch (err) {
+        // Superseded by a newer attempt: leave the new attempt alone.
+        if (get().attemptId !== attempt) return;
         if (signal.aborted || isAbortError(err)) {
           set({
             state: "idle",
@@ -546,7 +588,7 @@ export function createConnectionStore(
         }
         return;
       }
-      if (signal.aborted) return;
+      if (signal.aborted || get().attemptId !== attempt) return;
       // Desktop now ready → open it (auto-launch, PRD §52).
       if (get().state === "ready") {
         await get().launchDesktop();
@@ -699,7 +741,7 @@ export function createConnectionStore(
       // Persist identity + name (+ password when typed) before provisioning.
       syncMemoryAfterConnect(input, device, displayName);
 
-      await prepareAndLaunch(service, input, scenario, signal);
+      await prepareAndLaunch(service, input, scenario, signal, get().attemptId);
     };
 
     const launchDesktop = async (): Promise<void> => {
@@ -861,6 +903,8 @@ export function createConnectionStore(
       lastFailure: null,
       scenario: "success",
       mode: "real",
+      attemptId: 0,
+      trace: [],
       savedDevices: [],
       addingDevice: false,
       notice: null,

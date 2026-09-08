@@ -1,0 +1,3173 @@
+root
+  anchor [ref=12, loc=href:/c/6a9fa348-d2b0-83ee-89aa-f31d61753a52#main, url=https://chatgpt.com/c/6a9fa348-d2b0-83ee-89aa-f31d61753a52#main]
+    text "跳至内容"
+  container
+    container
+      container "侧边栏"
+        button "打开侧边栏" [ref=24, loc=css:button[aria-label="打开侧边栏"]]
+          svg_root
+          svg_root
+        container
+          anchor [ref=32, loc=unstable, url=https://chatgpt.com/]
+            svg_root
+            text "新聊天"
+          button [ref=41, loc=unstable]
+            svg_root
+            text "搜索"
+          button [ref=168, loc=unstable]
+            svg_root
+            text "置顶"
+          button [ref=49, loc=unstable]
+            svg_root
+            text "最近聊天"
+        button "打开“个人资料”菜单" [ref=58, loc=role:button[name="打开“个人资料”菜单"]]
+          image
+      container
+        heading
+          text "历史聊天记录"
+        container "历史聊天记录"
+          container
+            anchor "主页" [ref=66, loc=css:a[aria-label="主页"], url=https://chatgpt.com/]
+              text "ChatGPT"
+            button "搜索" [ref=68, loc=css:button[aria-label="搜索"]]
+              svg_root
+            button "关闭侧边栏" [ref=70, loc=css:button[aria-label="关闭侧边栏"]]
+              svg_root
+          unordered_list
+            list_item
+              anchor [ref=75, loc=unstable, url=https://chatgpt.com/]
+                svg_root
+                text "新聊天"
+                text "⇧"
+                text "⌘"
+                text "O"
+            list_item
+          anchor [ref=510, loc=href:/library?entry_point=sidebar, url=https://chatgpt.com/library?entry_point=sidebar]
+            svg_root
+            text "资料库"
+          anchor [ref=180, loc=href:/projects, url=https://chatgpt.com/projects]
+            svg_root
+            text "项目"
+            button "新项目" [ref=183, loc=css:button[aria-label="新项目"]]
+              svg_root
+          anchor [ref=82, loc=href:/scheduled, url=https://chatgpt.com/scheduled]
+            svg_root
+            text "定时任务"
+          anchor [ref=85, loc=href:/plugins, url=https://chatgpt.com/plugins]
+            svg_root
+            text "插件"
+          svg_root
+          text "更多"
+          button [ref=185, loc=unstable]
+            heading
+              text "置顶"
+          unordered_list
+            list_item
+              anchor [ref=190, loc=href:/health, url=https://chatgpt.com/health]
+                svg_root
+                text "健康"
+                button "取消置顶健康功能" [ref=193, loc=css:button[aria-label="取消置顶健康功能"]]
+                  svg_root
+          button [ref=195, loc=unstable]
+            heading
+              text "最近"
+          anchor "新聊天" [ref=161, loc=css:a[aria-label="新聊天"], url=https://chatgpt.com/]
+            svg_root
+          button "整理聊天" [ref=199, loc=css:button[aria-label="整理聊天"]]
+            svg_root
+          unordered_list
+            list_item
+              anchor "架构评估与优化路线" [ref=514, loc=css:a[aria-label="架构评估与优化路线"], url=https://chatgpt.com/c/6a9fa348-d2b0-83ee-89aa-f31d61753a52]
+                text "架构评估与优化路线"
+                button "置顶 架构评估与优化路线" [ref=516, loc=css:button[aria-label="置顶 架构评估与优化路线"]]
+                  svg_root
+                button "打开“架构评估与优化路线”的对话选项" [ref=518, loc=css:button[aria-label="打开“架构评估与优化路线”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "生成应用开发提示词" [ref=203, loc=css:a[aria-label="生成应用开发提示词"], url=https://chatgpt.com/c/6a9bc501-1558-83e9-9729-d766ddaaa727]
+                text "生成应用开发提示词"
+                button "置顶 生成应用开发提示词" [ref=205, loc=css:button[aria-label="置顶 生成应用开发提示词"]]
+                  svg_root
+                button "打开“生成应用开发提示词”的对话选项" [ref=207, loc=css:button[aria-label="打开“生成应用开发提示词”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "NVIDIA叉车视觉应用翻译" [ref=210, loc=css:a[aria-label="NVIDIA叉车视觉应用翻译"], url=https://chatgpt.com/c/6a9f6a81-a7fc-83e8-acf8-668e9e736a81]
+                text "NVIDIA叉车视觉应用翻译"
+                button "置顶 NVIDIA叉车视觉应用翻译" [ref=212, loc=css:button[aria-label="置顶 NVIDIA叉车视觉应用翻译"]]
+                  svg_root
+                button "打开“NVIDIA叉车视觉应用翻译”的对话选项" [ref=214, loc=css:button[aria-label="打开“NVIDIA叉车视觉应用翻译”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "调研相似应用" [ref=217, loc=css:a[aria-label="调研相似应用"], url=https://chatgpt.com/c/6a9f5ecc-8b9c-83ee-9ebb-50734917d5b7]
+                text "调研相似应用"
+                button "置顶 调研相似应用" [ref=219, loc=css:button[aria-label="置顶 调研相似应用"]]
+                  svg_root
+                button "打开“调研相似应用”的对话选项" [ref=221, loc=css:button[aria-label="打开“调研相似应用”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "使用 tmux" [ref=224, loc=css:a[aria-label="使用 tmux"], url=https://chatgpt.com/c/6a9f6131-60c0-83e9-812c-b06cb39d694b]
+                text "使用 tmux"
+                button "置顶 使用 tmux" [ref=226, loc=css:button[aria-label="置顶 使用 tmux"]]
+                  svg_root
+                button "打开“使用 tmux”的对话选项" [ref=228, loc=css:button[aria-label="打开“使用 tmux”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "无缝切换Session" [ref=231, loc=css:a[aria-label="无缝切换Session"], url=https://chatgpt.com/c/6a9e6935-1f88-83e8-96a4-c637d367d0e5]
+                text "无缝切换Session"
+                button "置顶 无缝切换Session" [ref=233, loc=css:button[aria-label="置顶 无缝切换Session"]]
+                  svg_root
+                button "打开“无缝切换Session”的对话选项" [ref=235, loc=css:button[aria-label="打开“无缝切换Session”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "MTP应用调研" [ref=238, loc=css:a[aria-label="MTP应用调研"], url=https://chatgpt.com/c/6a9e271a-4878-83e8-916e-9a2c439a358c]
+                text "MTP应用调研"
+                button "置顶 MTP应用调研" [ref=240, loc=css:button[aria-label="置顶 MTP应用调研"]]
+                  svg_root
+                button "打开“MTP应用调研”的对话选项" [ref=242, loc=css:button[aria-label="打开“MTP应用调研”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "分析PoE与WiFi പ്രശ്നಗಳು" [ref=245, loc=css:a[aria-label="分析PoE与WiFi പ്രശ്നಗಳು"], url=https://chatgpt.com/c/6a9e4bac-655c-83e8-b721-e1e08858b99f]
+                text "分析PoE与WiFi പ്രശ്നಗಳು"
+                button "置顶 分析PoE与WiFi പ്രശ്നಗಳು" [ref=247, loc=css:button[aria-label="置顶 分析PoE与WiFi പ്രശ്നಗಳು"]]
+                  svg_root
+                button "打开“分析PoE与WiFi പ്രശ്നಗಳು”的对话选项" [ref=249, loc=css:button[aria-label="打开“分析PoE与WiFi പ്രശ്നಗಳು”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "检查选型页参数" [ref=252, loc=css:a[aria-label="检查选型页参数"], url=https://chatgpt.com/c/6a9e3295-df2c-83e9-8245-2f635036e6ec]
+                text "检查选型页参数"
+                button "置顶 检查选型页参数" [ref=254, loc=css:button[aria-label="置顶 检查选型页参数"]]
+                  svg_root
+                button "打开“检查选型页参数”的对话选项" [ref=256, loc=css:button[aria-label="打开“检查选型页参数”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Agent Harness 横评" [ref=259, loc=css:a[aria-label="Agent Harness 横评"], url=https://chatgpt.com/c/6a96802d-a3f8-83ec-ab24-39a775931c27?messageId=finalAgentTurnStart]
+                text "Agent Harness 横评"
+                button "置顶 Agent Harness 横评" [ref=261, loc=css:button[aria-label="置顶 Agent Harness 横评"]]
+                  svg_root
+                button "打开“Agent Harness 横评”的对话选项" [ref=263, loc=css:button[aria-label="打开“Agent Harness 横评”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "轻断食与备餐计划" [ref=266, loc=css:a[aria-label="轻断食与备餐计划"], url=https://chatgpt.com/c/6a93e99a-349c-83ee-b55a-97f81c953e3b]
+                text "轻断食与备餐计划"
+                button "置顶 轻断食与备餐计划" [ref=268, loc=css:button[aria-label="置顶 轻断食与备餐计划"]]
+                  svg_root
+                button "打开“轻断食与备餐计划”的对话选项" [ref=270, loc=css:button[aria-label="打开“轻断食与备餐计划”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "调研Jetson BEV智能车" [ref=273, loc=css:a[aria-label="调研Jetson BEV智能车"], url=https://chatgpt.com/c/6a98d26a-a4d4-83e8-90de-9ee5e524f16a]
+                text "调研Jetson BEV智能车"
+                button "置顶 调研Jetson BEV智能车" [ref=275, loc=css:button[aria-label="置顶 调研Jetson BEV智能车"]]
+                  svg_root
+                button "打开“调研Jetson BEV智能车”的对话选项" [ref=277, loc=css:button[aria-label="打开“调研Jetson BEV智能车”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "设计 Wiki 优化工作流" [ref=280, loc=css:a[aria-label="设计 Wiki 优化工作流"], url=https://chatgpt.com/c/6a9a6ad6-6f40-83ee-b1c3-030ca8d332ed]
+                text "设计 Wiki 优化工作流"
+                button "置顶 设计 Wiki 优化工作流" [ref=282, loc=css:button[aria-label="置顶 设计 Wiki 优化工作流"]]
+                  svg_root
+                button "打开“设计 Wiki 优化工作流”的对话选项" [ref=284, loc=css:button[aria-label="打开“设计 Wiki 优化工作流”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Claude Code原理解读" [ref=287, loc=css:a[aria-label="Claude Code原理解读"], url=https://chatgpt.com/c/6a9a7609-68e0-83ee-bfa3-b1782d50426c]
+                text "Claude Code原理解读"
+                button "置顶 Claude Code原理解读" [ref=289, loc=css:button[aria-label="置顶 Claude Code原理解读"]]
+                  svg_root
+                button "打开“Claude Code原理解读”的对话选项" [ref=291, loc=css:button[aria-label="打开“Claude Code原理解读”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "绕过版本转换训练" [ref=294, loc=css:a[aria-label="绕过版本转换训练"], url=https://chatgpt.com/c/6a9a7cdc-c184-83ee-930f-118abf57e88c]
+                text "绕过版本转换训练"
+                button "置顶 绕过版本转换训练" [ref=296, loc=css:button[aria-label="置顶 绕过版本转换训练"]]
+                  svg_root
+                button "打开“绕过版本转换训练”的对话选项" [ref=298, loc=css:button[aria-label="打开“绕过版本转换训练”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Pi Agent Loop插件" [ref=301, loc=css:a[aria-label="Pi Agent Loop插件"], url=https://chatgpt.com/c/6a991e67-65d0-83ee-acae-de262525abdb]
+                text "Pi Agent Loop插件"
+                button "置顶 Pi Agent Loop插件" [ref=303, loc=css:button[aria-label="置顶 Pi Agent Loop插件"]]
+                  svg_root
+                button "打开“Pi Agent Loop插件”的对话选项" [ref=305, loc=css:button[aria-label="打开“Pi Agent Loop插件”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "实现实时距离感知" [ref=308, loc=css:a[aria-label="实现实时距离感知"], url=https://chatgpt.com/c/6a97eb03-6e3c-83ec-9c0d-42cc60498e6d]
+                text "实现实时距离感知"
+                button "置顶 实现实时距离感知" [ref=310, loc=css:button[aria-label="置顶 实现实时距离感知"]]
+                  svg_root
+                button "打开“实现实时距离感知”的对话选项" [ref=312, loc=css:button[aria-label="打开“实现实时距离感知”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "分析客户技术问题" [ref=315, loc=css:a[aria-label="分析客户技术问题"], url=https://chatgpt.com/c/6a9956b7-b478-83e8-9629-93e942e3837e]
+                text "分析客户技术问题"
+                button "置顶 分析客户技术问题" [ref=317, loc=css:button[aria-label="置顶 分析客户技术问题"]]
+                  svg_root
+                button "打开“分析客户技术问题”的对话选项" [ref=319, loc=css:button[aria-label="打开“分析客户技术问题”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Jetson 救援终端修复" [ref=322, loc=css:a[aria-label="Jetson 救援终端修复"], url=https://chatgpt.com/c/6a9a36ef-b0a8-83ee-a666-cd1a299d5227]
+                text "Jetson 救援终端修复"
+                button "置顶 Jetson 救援终端修复" [ref=324, loc=css:button[aria-label="置顶 Jetson 救援终端修复"]]
+                  svg_root
+                button "打开“Jetson 救援终端修复”的对话选项" [ref=326, loc=css:button[aria-label="打开“Jetson 救援终端修复”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "调研Jetson远程桌面" [ref=329, loc=css:a[aria-label="调研Jetson远程桌面"], url=https://chatgpt.com/c/6a952676-670c-83ec-863e-835556e4d69b]
+                text "调研Jetson远程桌面"
+                button "置顶 调研Jetson远程桌面" [ref=331, loc=css:button[aria-label="置顶 调研Jetson远程桌面"]]
+                  svg_root
+                button "打开“调研Jetson远程桌面”的对话选项" [ref=333, loc=css:button[aria-label="打开“调研Jetson远程桌面”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "推荐免费跨国视频聊天APP" [ref=336, loc=css:a[aria-label="推荐免费跨国视频聊天APP"], url=https://chatgpt.com/c/6a995c0a-cd9c-83e8-8749-0e24d823d2e7]
+                text "推荐免费跨国视频聊天APP"
+                button "置顶 推荐免费跨国视频聊天APP" [ref=338, loc=css:button[aria-label="置顶 推荐免费跨国视频聊天APP"]]
+                  svg_root
+                button "打开“推荐免费跨国视频聊天APP”的对话选项" [ref=340, loc=css:button[aria-label="打开“推荐免费跨国视频聊天APP”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Hermes TUI美化插件推荐" [ref=343, loc=css:a[aria-label="Hermes TUI美化插件推荐"], url=https://chatgpt.com/c/6a98e6c9-c87c-83e8-b7fb-8cc3a35d6214]
+                text "Hermes TUI美化插件推荐"
+                button "置顶 Hermes TUI美化插件推荐" [ref=345, loc=css:button[aria-label="置顶 Hermes TUI美化插件推荐"]]
+                  svg_root
+                button "打开“Hermes TUI美化插件推荐”的对话选项" [ref=347, loc=css:button[aria-label="打开“Hermes TUI美化插件推荐”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "调研开源动画技能" [ref=350, loc=css:a[aria-label="调研开源动画技能"], url=https://chatgpt.com/c/6a98dac8-7d84-83e9-8359-af358b725567]
+                text "调研开源动画技能"
+                button "置顶 调研开源动画技能" [ref=352, loc=css:button[aria-label="置顶 调研开源动画技能"]]
+                  svg_root
+                button "打开“调研开源动画技能”的对话选项" [ref=354, loc=css:button[aria-label="打开“调研开源动画技能”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "英语背词软件调研" [ref=357, loc=css:a[aria-label="英语背词软件调研"], url=https://chatgpt.com/c/6a98a040-dcd4-83ec-9a14-9cbbf731fa0b]
+                text "英语背词软件调研"
+                button "置顶 英语背词软件调研" [ref=359, loc=css:button[aria-label="置顶 英语背词软件调研"]]
+                  svg_root
+                button "打开“英语背词软件调研”的对话选项" [ref=361, loc=css:button[aria-label="打开“英语背词软件调研”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Jetson实时视频分割评估" [ref=364, loc=css:a[aria-label="Jetson实时视频分割评估"], url=https://chatgpt.com/c/6a963466-2c28-83ec-a1a8-00ace782b688]
+                text "Jetson实时视频分割评估"
+                button "置顶 Jetson实时视频分割评估" [ref=366, loc=css:button[aria-label="置顶 Jetson实时视频分割评估"]]
+                  svg_root
+                button "打开“Jetson实时视频分割评估”的对话选项" [ref=368, loc=css:button[aria-label="打开“Jetson实时视频分割评估”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "实时6D位姿估计方案" [ref=371, loc=css:a[aria-label="实时6D位姿估计方案"], url=https://chatgpt.com/c/6a97bb44-7de4-83ec-915c-507109557458]
+                text "实时6D位姿估计方案"
+                button "置顶 实时6D位姿估计方案" [ref=373, loc=css:button[aria-label="置顶 实时6D位姿估计方案"]]
+                  svg_root
+                button "打开“实时6D位姿估计方案”的对话选项" [ref=375, loc=css:button[aria-label="打开“实时6D位姿估计方案”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "自动打印方案设计" [ref=378, loc=css:a[aria-label="自动打印方案设计"], url=https://chatgpt.com/c/6a97c94d-c010-83ec-b2f6-8c0f724514e8]
+                text "自动打印方案设计"
+                button "置顶 自动打印方案设计" [ref=380, loc=css:button[aria-label="置顶 自动打印方案设计"]]
+                  svg_root
+                button "打开“自动打印方案设计”的对话选项" [ref=382, loc=css:button[aria-label="打开“自动打印方案设计”的对话选项"]]
+                  svg_root
+            list_item
+              anchor "Carveout含义解释" [ref=385, loc=css:a[aria-label="Carveout含义解释"], url=https://chatgpt.com/c/6a97b66f-26ec-83ec-a85f-ef6da5934b36]
+                text "Carveout含义解释"
+                button "置顶 Carveout含义解释" [ref=387, loc=css:button[aria-label="置顶 Carveout含义解释"]]
+                  svg_root
+                button "打开“Carveout含义解释”的对话选项" [ref=389, loc=css:button[aria-label="打开“Carveout含义解释”的对话选项"]]
+                  svg_root
+        image
+        text "chen duola"
+        text "个人账户"
+        button "下载应用" [ref=92, loc=css:button[aria-label="下载应用"]]
+          svg_root
+    container [ref=96, loc=unstable]
+      container
+        button "分享" [ref=523, loc=ambiguous]
+          svg_root
+          text "分享"
+        button "更多" [ref=530, loc=css:button[aria-label="更多"]]
+          svg_root
+      container [ref=109, loc=unstable]
+        container
+          container
+            container
+              heading
+                text "你说："
+              text "# 给 ChatGPT 的项目简报（Jetson Remote 优化咨询） > 于 2026-09-08 通过 chatgpt.com 网页聊天发出。本文件是发出的原稿留档。 --- 【请你扮演两个角色：资深产�..."
+              button [ref=550, loc=unstable]
+                text "展开"
+                svg_root
+              button "复制消息" [ref=557, loc=ambiguous]
+                svg_root
+              button "分享提示" [ref=559, loc=ambiguous]
+                svg_root
+              button "编辑消息" [ref=561, loc=ambiguous]
+                svg_root
+              container
+            container
+              heading
+                text "ChatGPT 说："
+              button [ref=684, loc=unstable]
+                text "思考了 44s"
+                svg_root
+              paragraph
+                text "基于你给出的 v0.3.7 状态，我会把 Jetson Remote 的阶段定义为："
+                text "MVP 已完成，开始进入“可靠性产品化”阶段"
+                text "。核心方向应该从“继续证明能实现”切换成“证明它长期、反复、跨版本都不会坏”。"
+              paragraph
+                text "下面是我按「产品经理 + 软件架构师」视角给出的完整评估。"
+              container
+                svg_root
+                button "编辑" [ref=708, loc=ambiguous]
+                  text "编辑"
+                button "复制" [ref=713, loc=ambiguous]
+                  svg_root
+                button [ref=715, loc=unstable]
+                  svg_root
+                button "打开编辑器" [ref=717, loc=ambiguous]
+                  svg_root
+              container [ref=720, loc=unstable]
+                heading
+                  text "Jetson Remote v0.3.7"
+                heading
+                  text "MVP 后架构评估与优化路线"
+                heading
+                  text "一、结论先行"
+                paragraph
+                  text "Jetson Remote 当前最大的价值，不是 FreeRDP，也不是 XRDP 自动安装，而是你已经积累出了一套："
+                paragraph
+                  text "“Jetson 无头设备 → 自动诊断 → 自动修复 → 安全建立远程 GUI → 自动恢复”的产品化经验。"
+                paragraph
+                  text "这实际上已经形成一定技术壁垒。"
+                paragraph
+                  text "很多远程桌面客户端能“连接 RDP”，但真正困难的是："
+                unordered_list
+                  list_item
+                    paragraph
+                      text "Ubuntu 20.04 / 22.04 / 24.04 差异"
+                  list_item
+                    paragraph
+                      text "JetPack 5 / 6 / 7 差异"
+                  list_item
+                    paragraph
+                      text "NVIDIA 默认桌面环境副作用"
+                  list_item
+                    paragraph
+                      text "XRDP / xorgxrdp / Xorg / XFCE / D-Bus 之间的坑"
+                  list_item
+                    paragraph
+                      text "sudo 生命周期"
+                  list_item
+                    paragraph
+                      text "SSH tunnel 生命周期"
+                  list_item
+                    paragraph
+                      text "macOS TCC"
+                  list_item
+                    paragraph
+                      text "Cocoa Native View"
+                  list_item
+                    paragraph
+                      text "FreeRDP 生命周期"
+                  list_item
+                    paragraph
+                      text "多 session 隔离"
+                  list_item
+                    paragraph
+                      text "clipboard"
+                  list_item
+                    paragraph
+                      text "IME"
+                  list_item
+                    paragraph
+                      text "suspend / reboot / power loss"
+                  list_item
+                    paragraph
+                      text "自动重连"
+                  list_item
+                    paragraph
+                      text "自动升级"
+                paragraph
+                  text "你已经处理了其中相当多真正会导致产品死亡的问题。"
+                paragraph
+                  text "因此目前"
+                  text "不应该马上把主要精力投入 V0.5/V0.6/V2"
+                  text "。"
+                paragraph
+                  text "未来 4–6 周最应该做的是："
+                paragraph
+                  text "把当前依靠“你知道这些坑”的稳定性，转化成“系统自己知道怎么保证稳定”的能力。"
+                paragraph
+                  text "我的建议甚至是调整版本路线："
+                text "现在： 0.3.x ↓ 0.4 Terminal + SFTP ↓ 0.5 System Panel ↓ 0.6 Agent ↓ 1.0 Embedded ↓ 2.0 WebRTC 建议： 0.3.x ↓ 0.4 Reliability Foundation ↓ 0.5 Terminal + Files ↓ 0.6 Device Insigh..."
+                heading
+                  text "二、现状成熟度评估"
+                heading
+                  text "综合评分"
+                table
+                  table_row
+                    table_cell
+                      text "维度"
+                    table_cell
+                      text "评分"
+                    table_cell
+                      text "判断"
+                  table_row
+                    table_cell
+                      text "产品定位"
+                    table_cell
+                      text "9/10"
+                    table_cell
+                      text "场景非常明确，没有试图做通用远程桌面"
+                  table_row
+                    table_cell
+                      text "用户体验架构"
+                    table_cell
+                      text "8.5/10"
+                    table_cell
+                      text "将 SSH/XRDP/Xorg 隐藏非常正确"
+                  table_row
+                    table_cell
+                      text "总体软件架构"
+                    table_cell
+                      text "8/10"
+                    table_cell
+                      text "Control Plane / Desktop Plane 解耦是正确方向"
+                  table_row
+                    table_cell
+                      text "状态管理"
+                    table_cell
+                      text "8.5/10"
+                    table_cell
+                      text "单状态机明显优于大量 boolean"
+                  table_row
+                    table_cell
+                      text "安全意识"
+                    table_cell
+                      text "8/10"
+                    table_cell
+                      text "tunnel、密码不进 argv/log、脱敏做得很好"
+                  table_row
+                    table_cell
+                      text "多设备架构"
+                    table_cell
+                      text "8/10"
+                    table_cell
+                      text "已经提前处理 session 隔离"
+                  table_row
+                    table_cell
+                      text "故障恢复"
+                    table_cell
+                      text "8/10"
+                    table_cell
+                      text "大量真实故障已经得到处理"
+                  table_row
+                    table_cell
+                      text "可观测性"
+                    table_cell
+                      text "6.5/10"
+                    table_cell
+                      text "Diagnostics 有了，但还没成为系统级 tracing"
+                  table_row
+                    table_cell
+                      text "自动化测试"
+                    table_cell
+                      text "5.5/10"
+                    table_cell
+                      text "目前是整个项目最大的工程短板"
+                  table_row
+                    table_cell
+                      text "Provisioning 可维护性"
+                    table_cell
+                      text "6/10"
+                    table_cell
+                      text "Bash 可以继续用，但模型需要升级"
+                  table_row
+                    table_cell
+                      text "Embedded RDP 可维护性"
+                    table_cell
+                      text "6.5/10"
+                    table_cell
+                      text "能做，但未来会成为复杂度中心"
+                  table_row
+                    table_cell
+                      text "更新/回滚体系"
+                    table_cell
+                      text "6.5/10"
+                    table_cell
+                      text "自动更新已有，但 rollback/atomicity 更重要"
+                  table_row
+                    table_cell
+                      text "长期维护成本"
+                    table_cell
+                      text "6.5/10"
+                    table_cell
+                      text "目前知识仍较集中在作者本人"
+                  table_row
+                    table_cell
+                      text "产品成熟度"
+                    table_cell
+                      text "8/10"
+                    table_cell
+                      text "已经超过传统 MVP"
+                  table_row
+                    table_cell
+                      text "工程成熟度"
+                    table_cell
+                      text "7–7.5/10"
+                    table_cell
+                      text "缺少自动化可靠性基础设施"
+                paragraph
+                  text "综合判断："
+                paragraph
+                  text "7.8 / 10 左右。"
+                paragraph
+                  text "这是一个“已经具备成为真正产品条件”的项目，而不是 Demo。"
+                paragraph
+                  text "但现在开始，每继续增加一个功能，都可能以非线性的方式提高维护成本。"
+                heading
+                  text "三、当前架构里最值得保留的几个决定"
+                heading
+                  text "1. SSH Control Plane 与 RDP Desktop Plane 分离"
+                paragraph
+                  text "这是整个架构里最正确的决定之一。"
+                paragraph
+                  text "SSH 负责："
+                text "Identity Provisioning Diagnostics Lifecycle Tunnel Recovery"
+                paragraph
+                  text "RDP 只负责："
+                text "Desktop Transport Display Input Clipboard IME"
+                paragraph
+                  text "不要把这些重新混到一起。"
+                paragraph
+                  text "未来即使 Desktop Plane 从："
+                text "XRDP + FreeRDP"
+                paragraph
+                  text "变成："
+                text "Jetson Agent + H.264 + WebRTC"
+                paragraph
+                  text "控制面依然可以保持不变。"
+                paragraph
+                  text "所以当前架构实际上已经为 V2 留出了演进空间。"
+                heading
+                  text "四、最脆弱的环节排名"
+                paragraph
+                  text "如果从“未来最可能持续制造 bug”的角度排序："
+                text "① Remote Provisioning ↓ ② Embedded FreeRDP / Cocoa bridge ↓ ③ Session / Tunnel 生命周期 ↓ ④ 自动更新 ↓ ⑤ OS / JetPack 版本漂移 ↓ ⑥ Identity / Credential binding ↓ �..."
+                paragraph
+                  text "但真正最大的系统级风险其实不是任何一个模块。"
+                paragraph
+                  text "而是："
+                paragraph
+                  text "没有自动化可靠性验证体系。"
+                paragraph
+                  text "你现在已经解决了 KI-001～039。"
+                paragraph
+                  text "真正危险的是 KI-040～120。"
+                paragraph
+                  text "因为产品越成熟，bug 越不会表现成："
+                paragraph
+                  text "“点击 Connect 就报错。”"
+                paragraph
+                  text "而会变成："
+                text "连接 23 次之后才出现 设备 suspend 后出现 升级 JetPack 后出现 第二台设备断电后出现 升级 App 后旧 session 出现 Clipboard + IME + reconnect 组合出现 IPv6 被用户�..."
+                paragraph
+                  text "这些问题单靠开发者人工验证会越来越难覆盖。"
+                heading
+                  text "五、隐藏短板 1：bootstrap.sh 已经接近复杂度上限"
+                paragraph
+                  text "Bash 本身不是问题。"
+                paragraph
+                  text "我不建议现在重写成 Rust Agent。"
+                paragraph
+                  text "真正的问题是，目前 provisioning 的概念很可能仍然类似："
+                text "执行 bash ↓ 成功 / 失败"
+                paragraph
+                  text "长期应该演化成："
+                text "Provisioning Plan Step 01 Detect OS Step 02 Detect packages Step 03 Install xrdp Step 04 Configure xrdp Step 05 Configure xorgxrdp Step 06 Configure XFCE Step 07 Configure session Step 08 Restart serv..."
+                paragraph
+                  text "每一步都应该拥有："
+                text "id check() apply() verify() repair() result"
+                paragraph
+                  text "不一定真的写成 Rust class。"
+                paragraph
+                  text "第一阶段完全可以继续 Bash。"
+                paragraph
+                  text "例如："
+                text "STEP=xrdp.install STATUS=already_satisfied"
+                paragraph
+                  text "或者："
+                text "{ "step": "xrdp.ssl_cert", "status": "repaired", "before": "missing-group", "after": "ssl-cert" }"
+                paragraph
+                  text "核心目标是："
+                paragraph
+                  text "从 imperative script 逐渐变成 resumable provisioning protocol。"
+                heading
+                  text "六、为什么不建议现在写 Device Agent"
+                paragraph
+                  text "你 Roadmap 中："
+                text "V0.6 Device Agent"
+                paragraph
+                  text "这是我最建议谨慎的一项。"
+                paragraph
+                  text "因为一旦设备端存在常驻 Agent，你马上获得："
+                text "agent daemon agent upgrade agent crash agent privilege agent compatibility agent protocol version agent authentication agent startup agent log rotation agent rollback"
+                paragraph
+                  text "原本一个 macOS App 的维护问题，就变成："
+                text "macOS App + Ubuntu daemon + 跨版本协议"
+                paragraph
+                  text "复杂度可能直接接近 ×2。"
+                paragraph
+                  text "目前你的“agentless SSH bootstrap”反而是非常大的优势。"
+                paragraph
+                  text "因此我的原则会是："
+                paragraph
+                  text "只在某项核心能力“没有 Agent 就无法合理实现”时才引入 Agent。"
+                paragraph
+                  text "比如未来真正做："
+                text "实时 GPU telemetry 视频捕获 WebRTC 设备事件推送"
+                paragraph
+                  text "那时才有足够理由。"
+                paragraph
+                  text "Terminal、SFTP、系统信息都没有必要为了它引入 Agent。"
+                heading
+                  text "七、隐藏短板 2：Embedded FreeRDP 会成为未来复杂度中心"
+                paragraph
+                  text "你的 embedded 方向是对的。"
+                paragraph
+                  text "但它很可能最终成为代码里最危险的模块。"
+                paragraph
+                  text "原因是它横跨："
+                text "React Tauri Rust C ABI FreeRDP pthread macOS RunLoop NSView CALayer Keyboard IME Clipboard Display Resize Session Lifecycle"
+                paragraph
+                  text "这是典型的："
+                paragraph
+                  text "FFI + GUI + concurrency + stateful protocol"
+                paragraph
+                  text "组合。"
+                paragraph
+                  text "任何一个单独都不简单。"
+                paragraph
+                  text "所以这里应该建立一个非常明确的边界："
+                text "App │ │ RdpSessionManager │ ┌───────┴────────┐ │ │ Session A Session B │ │ RdpEngine RdpEngine │ FreeRDP Bridge │ FreeRDP"
+                paragraph
+                  text "前端绝对不应该知道："
+                text "freerdp context channel manager rdpgfx clipboard channel cocoa view pointer"
+                paragraph
+                  text "前端应该永远只知道："
+                text "connect disconnect resize focus send_input connected frame_ready clipboard error"
+                heading
+                  text "关键原则"
+                paragraph
+                  text "以后不要继续在 FreeRDP Bridge 上无限 patch。"
+                paragraph
+                  text "尽量把它冻结成一个："
+                paragraph
+                  text "非常窄的 Adapter Layer。"
+                heading
+                  text "八、隐藏短板 3：ConnectionState 正确，但还不够"
+                paragraph
+                  text "你现在："
+                text "Idle ConnectingSsh Authenticating DetectingDevice ... Connected Error"
+                paragraph
+                  text "比 boolean 状态好很多。"
+                paragraph
+                  text "但随着复杂度增加，还需要引入："
+                paragraph
+                  text "Session State 与 Pipeline State 分离。"
+                paragraph
+                  text "例如："
+                text "DeviceConnection ├── SSH State ├── Tunnel State ├── Provision State └── RDP State"
+                paragraph
+                  text "而 UI 可以继续只消费聚合后的："
+                text "ConnectionState"
+                paragraph
+                  text "原因是现实中会出现："
+                text "SSH = Connected Tunnel = Dead RDP = Connected-but-stalled"
+                paragraph
+                  text "或者："
+                text "SSH = Reconnecting Tunnel = Recreated RDP = Waiting"
+                paragraph
+                  text "如果所有东西都塞进一个 enum："
+                text "ConnectionState"
+                paragraph
+                  text "未来状态组合会爆炸。"
+                paragraph
+                  text "建议："
+                text "内部： Orthogonal State Machines 外部： Derived UI State"
+                paragraph
+                  text "这是值得做的小型架构调整，但不需要大重构。"
+                heading
+                  text "九、隐藏短板 4：自动更新必须比普通 App 更保守"
+                paragraph
+                  text "远程设备管理软件有一个特殊问题："
+                paragraph
+                  text "一旦升级把 Connect 弄坏，用户可能失去访问设备的唯一入口。"
+                paragraph
+                  text "所以 Jetson Remote 的自动更新风险比普通 App 更高。"
+                paragraph
+                  text "建议升级策略变成："
+                text "Download ↓ Verify signature ↓ Stage ↓ Keep previous version ↓ Atomic switch ↓ Launch new version ↓ Health check ↓ Commit"
+                paragraph
+                  text "失败："
+                text "Rollback"
+                paragraph
+                  text "至少保留："
+                text "Previous Known Good"
+                paragraph
+                  text "一版。"
+                paragraph
+                  text "这个优先级其实比 System Panel 高很多。"
+                heading
+                  text "十、隐藏短板 5：SSH Host Identity"
+                paragraph
+                  text "你现在已经有："
+                text "machine-id serial fallback identity"
+                paragraph
+                  text "用于识别设备。"
+                paragraph
+                  text "非常好。"
+                paragraph
+                  text "但安全上还有另外一个 Identity："
+                paragraph
+                  text "SSH Host Key。"
+                paragraph
+                  text "如果当前没有严格做："
+                text "TOFU Trust On First Use"
+                paragraph
+                  text "建议增加："
+                paragraph
+                  text "第一次："
+                text "IP ↓ Host key ↓ machine-id ↓ Device record"
+                paragraph
+                  text "之后如果："
+                text "同 IP 但 SSH host key 改变"
+                paragraph
+                  text "不能直接静默连接。"
+                paragraph
+                  text "因为："
+                text "DHCP IP reuse 设备刷机 设备更换 MITM"
+                paragraph
+                  text "都可能导致这种情况。"
+                paragraph
+                  text "合理 UX 是："
+                text "Device identity changed"
+                paragraph
+                  text "而不是暴露："
+                text "ECDSA SHA256..."
+                paragraph
+                  text "技术细节。"
+                heading
+                  text "十一、近期优化：1–2 周"
+                paragraph
+                  text "这是目前投资回报率最高的一组。"
+                heading
+                  text "P0-1 建立 Reliability Test Harness"
+                heading
+                  text "做什么"
+                paragraph
+                  text "建立四层测试模型："
+                text "Layer 1 Pure Unit Tests Rust: state machine identity retry backoff tunnel allocation diagnostics redaction TS: store tab state session routing Layer 2 Linux Integration Environment sshd xrdp xorgxrdp ..."
+                paragraph
+                  text "不要求所有层第一周完成。"
+                paragraph
+                  text "先搭骨架。"
+                heading
+                  text "价值"
+                paragraph
+                  text "极高。"
+                paragraph
+                  text "这是未来所有功能开发的保险。"
+                heading
+                  text "成本"
+                paragraph
+                  text "中。"
+                paragraph
+                  text "大约："
+                text "3–6 engineer days"
+                paragraph
+                  text "即可做出第一版。"
+                heading
+                  text "风险"
+                paragraph
+                  text "低。"
+                heading
+                  text "验收"
+                paragraph
+                  text "至少自动覆盖："
+                text "connect disconnect reconnect wrong password sudo failure RDP failure tunnel failure bootstrap rerun"
+                paragraph
+                  text "真机增加："
+                text "30 次 Connect/Disconnect 30 次 power cycle + reconnect 3 台设备并发连接 2 小时持续 session"
+                paragraph
+                  text "并生成统一结果报告。"
+                heading
+                  text "P0-2 Bootstrap Step 化"
+                heading
+                  text "做什么"
+                paragraph
+                  text "不要重写。"
+                paragraph
+                  text "把现有 bootstrap.sh 切成显式 steps。"
+                paragraph
+                  text "例如："
+                text "detect.os detect.desktop xrdp.package xrdp.config xorg.config xfce.config session.config services.restart services.verify"
+                paragraph
+                  text "每个 step："
+                text "CHECK APPLY VERIFY RESULT"
+                heading
+                  text "价值"
+                paragraph
+                  text "极高。"
+                paragraph
+                  text "未来出现："
+                text "Ubuntu 24.10 新 JetPack 用户手动修改 xrdp"
+                paragraph
+                  text "时会非常有价值。"
+                heading
+                  text "成本"
+                paragraph
+                  text "中。"
+                heading
+                  text "风险"
+                paragraph
+                  text "低。"
+                heading
+                  text "验收"
+                paragraph
+                  text "必须做到："
+                text "bootstrap 连续执行 10 次 结果一致"
+                paragraph
+                  text "并能够："
+                text "在任意一个主要 step 中断 ↓ 重新 Connect ↓ 恢复执行 ↓ 最终进入 Connected"
+                heading
+                  text "P0-3 Structured Diagnostics"
+                paragraph
+                  text "现在 DiagnosticsReport 不要只做："
+                text "复制文本"
+                paragraph
+                  text "升级成："
+                text "Connection Trace"
+                paragraph
+                  text "例如："
+                text "SESSION 8D73 00.000 SSH_CONNECT 00.238 SSH_AUTH_OK 00.431 DEVICE_FOUND 00.662 ENV_CHECK 01.431 TUNNEL_CREATED 01.923 RDP_CONNECT 02.884 RDP_CONNECTED"
+                paragraph
+                  text "错误："
+                text "XRDP_SESMAN_CONNECT_FAILED"
+                paragraph
+                  text "而不是："
+                text "Connection failed."
+                heading
+                  text "价值"
+                paragraph
+                  text "非常高。"
+                paragraph
+                  text "39 个 Known Issues 已经证明："
+                paragraph
+                  text "observability 是这个产品最核心的能力之一。"
+                heading
+                  text "验收"
+                paragraph
+                  text "任何 Connection failure："
+                text "必须产生唯一 ErrorCode"
+                paragraph
+                  text "并且："
+                text "Diagnostics 无密码 无完整 Token 无敏感 argv"
+                heading
+                  text "P0-4 自动更新 rollback"
+                heading
+                  text "做什么"
+                paragraph
+                  text "保留上一版本。"
+                paragraph
+                  text "增加："
+                text "update staged update applied health check commit rollback"
+                heading
+                  text "价值"
+                paragraph
+                  text "极高。"
+                heading
+                  text "成本"
+                paragraph
+                  text "中。"
+                heading
+                  text "风险"
+                paragraph
+                  text "中。"
+                paragraph
+                  text "涉及 app lifecycle。"
+                heading
+                  text "验收"
+                paragraph
+                  text "模拟："
+                text "下载中 kill 解压中 kill 替换中 kill 第一次启动 crash"
+                paragraph
+                  text "均必须保证："
+                text "至少一个版本可以启动。"
+                heading
+                  text "P1-5 Connection Failure UX"
+                paragraph
+                  text "不要把它当普通 Error Page。"
+                paragraph
+                  text "应该变成："
+                text "Problem detected ↓ Auto diagnosis ↓ Auto repair ↓ Retry"
+                paragraph
+                  text "例如："
+                text "Remote desktop service stopped Repairing... ✓ XRDP restarted ✓ Session checked Retrying..."
+                paragraph
+                  text "而不是："
+                text "Error: sesman connection failed"
+                paragraph
+                  text "这其实会逐渐成为 Jetson Remote 最大的产品壁垒。"
+                heading
+                  text "十二、中期优化：约 1–3 个月"
+                heading
+                  text "1. Integrated Terminal"
+                paragraph
+                  text "我支持做。"
+                paragraph
+                  text "而且价值很高。"
+                paragraph
+                  text "因为用户当前典型工作流一定是："
+                text "Remote Desktop + Terminal"
+                paragraph
+                  text "现在却需要："
+                text "Jetson Remote + Terminal.app"
+                paragraph
+                  text "Terminal 可以直接复用："
+                text "SSH Control Plane"
+                paragraph
+                  text "非常自然。"
+                heading
+                  text "推荐"
+                paragraph
+                  text "不要做复杂 Terminal IDE。"
+                paragraph
+                  text "第一版："
+                text "Tabs Shell Resize Copy/Paste Reconnect"
+                paragraph
+                  text "即可。"
+                heading
+                  text "十三、SFTP 文件浏览器也值得做"
+                paragraph
+                  text "这与产品定位高度契合。"
+                paragraph
+                  text "核心功能只需要："
+                text "Home Upload Download Rename Delete New Folder Drag & Drop"
+                paragraph
+                  text "不要立刻做："
+                text "文本编辑器 图片编辑器 Git 同步盘 文件预览系统"
+                paragraph
+                  text "它可以形成非常清晰的用户体验："
+                text "Jetson Desktop Terminal Files"
+                paragraph
+                  text "这三个入口已经覆盖绝大多数开发者远程使用需求。"
+                heading
+                  text "十四、System Panel 值得做，但要保持“小”"
+                paragraph
+                  text "推荐："
+                text "CPU GPU RAM Disk Temperature Power mode JetPack L4T CUDA"
+                paragraph
+                  text "不要变成："
+                text "Grafana"
+                paragraph
+                  text "系统面板真正价值不是监控。"
+                paragraph
+                  text "而是："
+                paragraph
+                  text "用户第一次打开设备就知道“这台 Jetson 当前是什么状态”。"
+                paragraph
+                  text "例如："
+                text "Jetson AGX Orin JetPack 6.2.1 L4T 36.4.4 GPU 42% RAM 18.2 / 64 GB Temp 48°C Power MAXN Storage 68%"
+                paragraph
+                  text "这是很好的产品能力。"
+                paragraph
+                  text "而且完全可以通过 SSH command 实现。"
+                paragraph
+                  text "目前没有必要 Agent。"
+                heading
+                  text "十五、长期优化"
+                heading
+                  text "1. Embedded FreeRDP GA"
+                paragraph
+                  text "这是 V1 前必须完成的事情。"
+                paragraph
+                  text "目标不是："
+                paragraph
+                  text "“embedded 可以跑。”"
+                paragraph
+                  text "而是："
+                paragraph
+                  text "“embedded 比 sidecar 更稳定。”"
+                paragraph
+                  text "验收至少应该覆盖："
+                text "8 小时 session 100 次 connect/disconnect 50 次 resize sleep/wake app background/foreground Jetson reboot Mac network switch clipboard stress IME stress 3 device concurrent"
+                paragraph
+                  text "达到这个水平之后："
+                text "sidecar"
+                paragraph
+                  text "才可以真正降级成 debug fallback。"
+                heading
+                  text "十六、Device Agent：建议推迟"
+                paragraph
+                  text "直到下面某个需求出现："
+                text "持续实时 telemetry push event remote video encoding WebRTC 低延迟 screen capture 后台任务"
+                paragraph
+                  text "再考虑。"
+                paragraph
+                  text "而且未来即使做，也建议："
+                text "Unprivileged agent"
+                paragraph
+                  text "默认："
+                text "non-root"
+                paragraph
+                  text "需要 privileged operation 时再通过独立机制升级权限。"
+                paragraph
+                  text "不要设计成："
+                text "root daemon"
+                paragraph
+                  text "常驻。"
+                heading
+                  text "十七、WebRTC V2：现在不要投入"
+                paragraph
+                  text "这一条我会明确暂停。"
+                paragraph
+                  text "因为："
+                text "GPU Capture NVENC H.264/H.265 WebRTC Congestion Control Input Clipboard IME Session Codec Negotiation Network Adaptation"
+                paragraph
+                  text "会让你实际上重新开发一套："
+                paragraph
+                  text "Parsec / Sunshine / RustDesk / Moonlight"
+                paragraph
+                  text "式系统。"
+                paragraph
+                  text "而你现在的产品卖点不是："
+                paragraph
+                  text "极致画质。"
+                paragraph
+                  text "而是："
+                paragraph
+                  text "Jetson 开发者能稳定进去。"
+                paragraph
+                  text "因此："
+                text "XRDP 30 FPS"
+                paragraph
+                  text "如果稳定，"
+                paragraph
+                  text "远比："
+                text "WebRTC 60 FPS 偶尔连接失败"
+                paragraph
+                  text "更符合产品定位。"
+                paragraph
+                  text "只有出现大量真实用户反馈："
+                paragraph
+                  text "“唯一阻碍我使用 Jetson Remote 的问题就是 RDP 性能。”"
+                paragraph
+                  text "再投入 V2。"
+                heading
+                  text "十八、建议增加一个概念：Compatibility Contract"
+                paragraph
+                  text "现在支持："
+                text "JP5 JP6 JP7"
+                paragraph
+                  text "以后不要简单写："
+                text "JetPack supported"
+                paragraph
+                  text "内部维护："
+                text "Compatibility Matrix"
+                paragraph
+                  text "例如："
+                table
+                  table_row
+                    table_cell
+                      text "OS"
+                    table_cell
+                      text "JP"
+                    table_cell
+                      text "XRDP"
+                    table_cell
+                      text "xorgxrdp"
+                    table_cell
+                      text "XFCE"
+                    table_cell
+                      text "Status"
+                  table_row
+                    table_cell
+                      text "Ubuntu 20.04"
+                    table_cell
+                      text "JP5"
+                    table_cell
+                      text "A"
+                    table_cell
+                      text "B"
+                    table_cell
+                      text "C"
+                    table_cell
+                      text "Verified"
+                  table_row
+                    table_cell
+                      text "Ubuntu 22.04"
+                    table_cell
+                      text "JP6"
+                    table_cell
+                      text "A"
+                    table_cell
+                      text "B"
+                    table_cell
+                      text "C"
+                    table_cell
+                      text "Verified"
+                  table_row
+                    table_cell
+                      text "Ubuntu 24.04"
+                    table_cell
+                      text "JP7"
+                    table_cell
+                      text "A"
+                    table_cell
+                      text "B"
+                    table_cell
+                      text "C"
+                    table_cell
+                      text "Verified"
+                paragraph
+                  text "另外定义："
+                text "Verified Expected Experimental Unsupported"
+                paragraph
+                  text "UI 不需要把复杂矩阵展示给用户。"
+                paragraph
+                  text "但 Diagnostics 应该知道："
+                text "compatibility_profile: jp6_ubuntu2204_v3"
+                paragraph
+                  text "这会大幅降低未来维护成本。"
+                heading
+                  text "十九、建议建立 Known Good Configuration"
+                paragraph
+                  text "这可能是非常有价值的机制。"
+                paragraph
+                  text "例如保存："
+                text "xrdp.ini hash sesman.ini hash .xsession hash .xsessionrc hash XFCE config service state package versions"
+                paragraph
+                  text "不需要粗暴覆盖用户配置。"
+                paragraph
+                  text "而是："
+                text "Current vs Expected"
+                paragraph
+                  text "出现问题时："
+                text "Configuration drift detected"
+                paragraph
+                  text "然后 Jetson Remote 可以："
+                text "Repair"
+                paragraph
+                  text "这比："
+                text "重新跑 bootstrap.sh"
+                paragraph
+                  text "高级很多。"
+                paragraph
+                  text "产品逐渐从："
+                paragraph
+                  text "installer"
+                paragraph
+                  text "变成："
+                paragraph
+                  text "self-healing remote environment manager"
+                paragraph
+                  text "这是值得发展的方向。"
+                heading
+                  text "二十、非常值得增加 Fault Injection"
+                paragraph
+                  text "这是我非常推荐的一项。"
+                paragraph
+                  text "主动模拟："
+                text "SSH suddenly dies Tunnel dies xrdp dies sesman dies network disappears Jetson reboot Mac sleep invalid credentials sudo timeout RDP socket half-open clipboard channel dies"
+                paragraph
+                  text "然后验证："
+                text "ConnectionState"
+                paragraph
+                  text "是否最终收敛。"
+                paragraph
+                  text "目标："
+                text "系统永远不能停在未知状态。"
+                paragraph
+                  text "最终必须进入："
+                text "Connected 或者 RecoverableError 或者 Disconnected"
+                paragraph
+                  text "而不能："
+                text "Connecting..."
+                paragraph
+                  text "永远转圈。"
+                heading
+                  text "二十一、推荐定义 Reliability SLO"
+                paragraph
+                  text "例如内部定义："
+                heading
+                  text "Warm connection"
+                paragraph
+                  text "在正常 LAN + 已 provision 环境："
+                text "100 次连接 ≥ 99 次成功"
+                heading
+                  text "Reconnect"
+                text "30 次 Jetson reboot ≥ 29 次自动恢复"
+                heading
+                  text "Multi-device"
+                text "3 devices 2 hours 0 credential leak 0 clipboard cross-session 0 tunnel collision"
+                heading
+                  text "Long session"
+                text "8 hours 0 crash 0 permanent input loss 0 permanent clipboard loss"
+                heading
+                  text "Provisioning"
+                text "JP5 JP6 JP7 clean image × upgrade image"
+                paragraph
+                  text "全部跑一次。"
+                paragraph
+                  text "这会让你以后判断："
+                paragraph
+                  text "这个版本到底能不能 release"
+                paragraph
+                  text "从“感觉稳定”升级为："
+                paragraph
+                  text "“达到 release SLO”。"
+                heading
+                  text "二十二、近期 / 中期 / 长期完整优先级"
+                table
+                  table_row
+                    table_cell
+                      text "项目"
+                    table_cell
+                      text "时间"
+                    table_cell
+                      text "价值"
+                    table_cell
+                      text "成本"
+                    table_cell
+                      text "风险"
+                    table_cell
+                      text "优先级"
+                  table_row
+                    table_cell
+                      text "Reliability Harness"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★"
+                    table_cell
+                      text "P0"
+                  table_row
+                    table_cell
+                      text "Bootstrap Steps"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "P0"
+                  table_row
+                    table_cell
+                      text "Structured Diagnostics"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "★"
+                    table_cell
+                      text "P0"
+                  table_row
+                    table_cell
+                      text "Updater Rollback"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "P0"
+                  table_row
+                    table_cell
+                      text "SSH Host Identity"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "★"
+                    table_cell
+                      text "P1"
+                  table_row
+                    table_cell
+                      text "Recovery UX"
+                    table_cell
+                      text "近期"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "★"
+                    table_cell
+                      text "P1"
+                  table_row
+                    table_cell
+                      text "Terminal"
+                    table_cell
+                      text "中期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "P1"
+                  table_row
+                    table_cell
+                      text "SFTP"
+                    table_cell
+                      text "中期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "P1"
+                  table_row
+                    table_cell
+                      text "System Panel"
+                    table_cell
+                      text "中期"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "★"
+                    table_cell
+                      text "P2"
+                  table_row
+                    table_cell
+                      text "Embedded GA"
+                    table_cell
+                      text "中长期"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "P1"
+                  table_row
+                    table_cell
+                      text "Device Agent"
+                    table_cell
+                      text "长期"
+                    table_cell
+                      text "★★★"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★★"
+                    table_cell
+                      text "P3"
+                  table_row
+                    table_cell
+                      text "WebRTC"
+                    table_cell
+                      text "长期"
+                    table_cell
+                      text "★★"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "★★★★★"
+                    table_cell
+                      text "P4"
+                heading
+                  text "二十三、如果只有 4–6 周，我只做这 5 件事"
+                paragraph
+                  text "这是我最建议的实际执行顺序。"
+                heading
+                  text "TOP 1 — Reliability Harness"
+                heading
+                  text "为什么第一"
+                paragraph
+                  text "因为接下来的任何开发："
+                text "Terminal Files System Panel Embedded"
+                paragraph
+                  text "都会增加回归面。"
+                paragraph
+                  text "如果今天不做测试体系："
+                text "39 Known Issues"
+                paragraph
+                  text "很容易变："
+                text "100+ Known Issues。"
+                paragraph
+                  text "而且越来越难判断旧问题是否再次出现。"
+                heading
+                  text "TOP 2 — Provisioning V2"
+                paragraph
+                  text "不是重写。"
+                paragraph
+                  text "而是："
+                text "bootstrap.sh ↓ Versioned Step-based Resumable Observable Idempotent Repairable"
+                paragraph
+                  text "这是 JetPack 7 → 后续版本持续兼容的基础。"
+                heading
+                  text "TOP 3 — Embedded Engine Hardening"
+                paragraph
+                  text "把："
+                text "FreeRDP bridge"
+                paragraph
+                  text "接口冻结。"
+                paragraph
+                  text "建立："
+                text "RdpSessionManager"
+                paragraph
+                  text "重点解决："
+                text "lifecycle thread ownership resource cleanup resize focus clipboard ownership IME ownership"
+                paragraph
+                  text "不要继续让业务逻辑侵入 bridge。"
+                heading
+                  text "TOP 4 — Update Rollback + Device Trust"
+                paragraph
+                  text "补齐："
+                text "Known Good Version SSH host identity machine identity credential identity"
+                paragraph
+                  text "这相当于："
+                paragraph
+                  text "给产品补保险。"
+                heading
+                  text "TOP 5 — Terminal + Files Vertical Slice"
+                paragraph
+                  text "在前四项做到足够程度之后，再开始新增能力。"
+                paragraph
+                  text "建议一次只做："
+                text "Terminal MVP + Files MVP"
+                paragraph
+                  text "因为这两个功能与当前用户场景匹配程度远高于："
+                text "Agent WebRTC"
+                paragraph
+                  text "最终主界面可以形成一个非常清晰的产品模型："
+                text "┌─────────────────────────────┐ │ Jetson AGX Orin │ │ Online · JetPack 6.2.1 │ ├───────────────�..."
+                paragraph
+                  text "未来再加入："
+                text "System"
+                paragraph
+                  text "变成："
+                text "Desktop Terminal Files System"
+                paragraph
+                  text "这已经是非常完整的 Jetson Remote 产品。"
+                heading
+                  text "二十四、我会怎么重新定义这个产品"
+                paragraph
+                  text "现在你的定义是："
+                paragraph
+                  text "Jetson Remote 是一个 Jetson 无头远程桌面客户端。"
+                paragraph
+                  text "短期没有问题。"
+                paragraph
+                  text "但从现在的架构发展看，我认为更好的长期定义实际上是："
+                paragraph
+                  text "The local control center for your Jetson."
+                paragraph
+                  text "或者："
+                paragraph
+                  text "Connect to any Jetson. No setup required."
+                paragraph
+                  text "核心不是："
+                text "Remote Desktop"
+                paragraph
+                  text "而是："
+                text "Connect Recover Operate Inspect"
+                paragraph
+                  text "用户根本不需要知道："
+                text "SSH XRDP XFCE xorgxrdp FreeRDP Tunnel"
+                paragraph
+                  text "这正是产品最有价值的地方。"
+                heading
+                  text "二十五、最终建议"
+                paragraph
+                  text "现在最容易犯的错误，是因为："
+                text "MVP finished"
+                paragraph
+                  text "而马上进入："
+                text "feature expansion"
+                paragraph
+                  text "但 Jetson Remote 这种产品真正的竞争力恰恰不是 feature 数量。"
+                paragraph
+                  text "真正竞争力是："
+                text "插上 Jetson ↓ 输入 IP ↓ Connect ↓ 每次都能进去"
+                paragraph
+                  text "所以未来 4–6 周的核心目标，我建议只设一个："
+                heading
+                  text "Make Connect Boring."
+                paragraph
+                  text "让 Connect 这件事变得无聊。"
+                paragraph
+                  text "用户不再关心："
+                text "JetPack 5 / 6 / 7 XRDP Xorg Wayland xorgxrdp IPv6 sudo D-Bus SSH tunnel"
+                paragraph
+                  text "无论设备之前发生过什么："
+                text "Connect"
+                paragraph
+                  text "最后大概率还是："
+                text "Connected."
+                paragraph
+                  text "如果 Jetson Remote 能做到这一点，它的技术壁垒实际上会比："
+                text "Terminal System Panel WebRTC"
+                paragraph
+                  text "这些功能高得多。"
+                paragraph
+                  text "因此我的最终排序是："
+                text "1. Reliability Harness 2. Provisioning V2 3. Embedded Session Architecture 4. Update Rollback + Device Trust 5. Terminal + Files ------------------------- System Panel ------------------------- Device..."
+                paragraph
+                  text "其中前四项不是“内部工程优化”。"
+                paragraph
+                  text "它们本身就是 Jetson Remote 下一阶段最重要的产品能力。"
+              paragraph
+                text "有一个判断我尤其建议你采纳："
+                text "V0.4 不妨从“Terminal + SFTP”改成“Reliability Release”"
+                text "。你现在已经有足够多真实故障经验，正处在把这些经验沉淀成护城河的最佳窗口；再晚几个版本，feature 面积变大以后再补这套体系，成本会明显更高..."
+              button "复制回复" [ref=3096, loc=ambiguous]
+                svg_root
+              button "评价回复" [ref=3098, loc=ambiguous]
+                svg_root
+              button "分享" [ref=3100, loc=ambiguous]
+                svg_root
+              button "切换模型" [ref=5094, loc=ambiguous]
+                svg_root
+              button "更多操作" [ref=3105, loc=ambiguous]
+                svg_root
+              container
+            container
+              heading
+                text "你说："
+              container
+                container
+                  text "完整读完了你的评估，非常认同「Make Connect Boring」和把 v0.4 改成 Reliability Release 的判断。接下来我会按 TOP1–4 顺序实施。 但我有一个现实约束：未来�..."
+                  button [ref=3139, loc=unstable]
+                    text "展开"
+                    svg_root
+                container
+                  button "复制消息" [ref=3146, loc=ambiguous]
+                    svg_root
+                  button "分享提示" [ref=3148, loc=ambiguous]
+                    svg_root
+                  button "编辑消息" [ref=3150, loc=ambiguous]
+                    svg_root
+              container
+            container
+              heading
+                text "ChatGPT 说："
+              container
+                container
+                  button [ref=3209, loc=unstable]
+                    text "思考了 2m 12s"
+                    svg_root
+                  container [ref=3213, loc=unstable]
+                    paragraph
+                      text "下面我把 TOP1–4 收敛成一个**“无 Jetson 真机阶段的 Reliability Foundation 执行包”"
+                      text "。目标不是模拟 Jetson 到 100%，而是先把所有"
+                      text "与硬件无关、确定性强、最容易造成长期回归的部分**做到可自动验证。真机恢复后，再补最后一层 Compatibility / Soak / Power-cycle 验证即可。"
+                    paragraph
+                      text "路径我按你之前 Tauri 项目的习惯，以"
+                      text "apps/desktop/src-tauri/"
+                      text "为基准；如果当前仓库目录略有不同，保持模块边界即可。"
+                    container
+                      container
+                        container
+                          svg_root
+                          button "编辑" [ref=3236, loc=ambiguous]
+                            container
+                            text "编辑"
+                        container
+                          button "复制" [ref=3241, loc=ambiguous]
+                            svg_root
+                          button [ref=3243, loc=unstable]
+                            svg_root
+                          button "打开编辑器" [ref=3245, loc=ambiguous]
+                            svg_root
+                      container [ref=3248, loc=unstable]
+                        heading
+                          text "Jetson Remote v0.4 Reliability Release"
+                        heading
+                          text "无 Jetson 真机第一阶段执行包"
+                        container
+                        heading
+                          text "0. 本阶段的 Definition of Done"
+                        paragraph
+                          text "这一阶段不要试图证明："
+                        container
+                          paragraph
+                            text "JetPack 5/6/7 真机全部稳定。"
+                          container
+                        paragraph
+                          text "没有硬件做不到，也没必要伪装成做到了。"
+                        paragraph
+                          text "本阶段真正应该证明的是："
+                        text "Connection orchestration 是确定的 Provisioning protocol 是确定的 RDP session lifecycle 是确定的 Updater recovery 是确定的 Device trust decision 是确定的"
+                        paragraph
+                          text "最终形成："
+                        text "┌────────────────────┐ │ Reliability Tests │ └─────────┬──────────┘ │ ┌───────────..."
+                        paragraph
+                          text "等 Jetson 真机回来以后，只增加："
+                        text "JetPack Compatibility Layer + Real FreeRDP / XRDP Soak + Power Cycle"
+                        paragraph
+                          text "而不是重新改架构。"
+                        heading
+                          text "1. 先建立一个共享原则"
+                        paragraph
+                          text "TOP1–4 不要分别自己造测试工具。"
+                        paragraph
+                          text "建议先增加："
+                        text "apps/desktop/src-tauri/crates/ ├── jr-core/ ├── jr-test-support/ ├── jr-provision/ ├── jr-session/ ├── jr-updater/ └── jr-device-trust/"
+                        paragraph
+                          text "不一定必须真的拆 6 个 crate。"
+                        paragraph
+                          text "如果现在代码规模不适合拆 crate，也至少保持："
+                        text "src/ ├── core/ ├── test_support/ ├── provision/ ├── session/ ├── updater/ └── trust/"
+                        paragraph
+                          text "但有一个模块很值得独立："
+                        text "jr-test-support"
+                        paragraph
+                          text "里面统一提供："
+                        text "FakeSshServer FakeTunnel FakeRdpAdapter FakeClock FakeKeychain FakeFilesystem FaultInjector EventRecorder ScenarioBuilder"
+                        paragraph
+                          text "以后所有可靠性测试都基于它。"
+                        paragraph
+                          text "不要每个模块自己 mock 一套。"
+                        heading
+                          text "2. TOP1 — Reliability Harness"
+                        heading
+                          text "2.1 无真机阶段能做到哪几层"
+                        paragraph
+                          text "建议现在建立 4 层。"
+                        paragraph
+                          text "真机回来后再加第 5 层。"
+                        heading
+                          text "Layer 0：Pure Core Tests"
+                        paragraph
+                          text "运行环境："
+                        text "macOS cargo test pnpm test"
+                        paragraph
+                          text "不产生："
+                        text "SSH FreeRDP XRDP Linux VM"
+                        paragraph
+                          text "重点测试所有："
+                        text "State Machine Identity Retry Backoff Port Allocation Error Mapping Redaction Session Routing"
+                        paragraph
+                          text "这是最重要的一层。"
+                        paragraph
+                          text "应该非常快。"
+                        heading
+                          text "Layer 1：Deterministic Integration Harness"
+                        paragraph
+                          text "仍然只在 macOS。"
+                        paragraph
+                          text "但是引入："
+                        text "Fake SSH Fake tunnel Fake RDP Fake Keychain Fake updater filesystem"
+                        paragraph
+                          text "测试整个连接 orchestration。"
+                        paragraph
+                          text "例如："
+                        text "Connect ↓ SSH success ↓ detect success ↓ provision satisfied ↓ tunnel created ↓ RDP connected"
+                        paragraph
+                          text "这里不需要真实网络。"
+                        paragraph
+                          text "它测试的是："
+                        paragraph
+                          text "Jetson Remote 自己有没有正确组织这些组件。"
+                        heading
+                          text "Layer 2：Linux Provisioning Contract"
+                        paragraph
+                          text "使用："
+                        text "Ubuntu container 或 Ubuntu VM"
+                        paragraph
+                          text "建议："
+                        text "Container： 测试 shell / JSONL / config mutation / parser VM： 测试 systemd / xrdp / xorgxrdp / XFCE"
+                        paragraph
+                          text "因为完整 XRDP bootstrap 放 Docker 里做，很容易因为 systemd/PAM/DBus 环境差异产生假问题。"
+                        paragraph
+                          text "VM 更接近真实环境。"
+                        paragraph
+                          text "至少准备："
+                        text "Ubuntu 20.04 ARM64/x86_64 Ubuntu 22.04 Ubuntu 24.04"
+                        paragraph
+                          text "CPU 架构不是这一阶段重点。"
+                        paragraph
+                          text "绝大多数 provisioning 问题来自："
+                        text "apt systemd PAM shell config permissions"
+                        paragraph
+                          text "这些都可以提前验证。"
+                        heading
+                          text "Layer 3：macOS Native Session Tests"
+                        paragraph
+                          text "测试："
+                        text "RdpSessionManager Native surface lifecycle focus resize clipboard ownership IME ownership multi-session cleanup"
+                        paragraph
+                          text "第一阶段可以："
+                        text "FakeRdpAdapter"
+                        paragraph
+                          text "为主。"
+                        paragraph
+                          text "如果 Ubuntu VM 中跑得起 XRDP，则额外加入："
+                        text "macOS FreeRDP ↓ Ubuntu VM XRDP"
+                        paragraph
+                          text "作为 integration smoke test。"
+                        heading
+                          text "Layer 4：Jetson Matrix"
+                        paragraph
+                          text "现在只定义接口。"
+                        paragraph
+                          text "暂时："
+                        container
+                          text "#"
+                          text "[ignore]"
+                        paragraph
+                          text "或者："
+                        text "requires_jetson"
+                        paragraph
+                          text "不执行。"
+                        paragraph
+                          text "未来恢复："
+                        text "JP5 JP6 JP7"
+                        paragraph
+                          text "再启用。"
+                        heading
+                          text "2.2 第一批测试用例"
+                        paragraph
+                          text "以下建议直接作为 test function 名。"
+                        heading
+                          text "A. Connection State"
+                        text "connection_happy_path_reaches_connected connection_ssh_connect_failure_reaches_error connection_auth_failure_does_not_start_provisioning connection_device_detection_failure_closes_ssh connection_provi..."
+                        heading
+                          text "B. State convergence"
+                        paragraph
+                          text "尤其重要："
+                        text "connection_never_remains_connecting_after_terminal_failure connection_all_failure_paths_converge_to_known_state connection_duplicate_disconnect_is_noop connection_duplicate_connect_is_rejected_or_coal..."
+                        paragraph
+                          text "最后这个非常重要。"
+                        paragraph
+                          text "例如："
+                        text "Connect A ↓ Cancel ↓ Connect B 但 A 的 SSH callback 晚回来"
+                        paragraph
+                          text "绝对不能污染 B。"
+                        paragraph
+                          text "建议每次 connection attempt 有："
+                        text "generation_id"
+                        paragraph
+                          text "或者："
+                        text "attempt_id"
+                        heading
+                          text "2.3 Tunnel Tests"
+                        text "tunnel_allocates_unique_local_port tunnel_port_collision_retries_with_new_port tunnel_process_alive_but_socket_dead_is_unhealthy tunnel_socket_alive_but_child_process_dead_is_unhealthy tunnel_disconne..."
+                        paragraph
+                          text "特别建议把当前："
+                        text "process alive == tunnel alive"
+                        paragraph
+                          text "这种判断彻底禁止。"
+                        paragraph
+                          text "health 至少应该是："
+                        text "process alive AND local port accepts connection"
+                        heading
+                          text "2.4 Device Identity Tests"
+                        text "identity_prefers_machine_id_when_available identity_falls_back_to_serial_when_machine_id_missing identity_falls_back_to_generated_fingerprint_when_both_missing identity_same_machine_id_different_ip_is..."
+                        heading
+                          text "2.5 Credential Isolation"
+                        text "credentials_are_session_scoped credentials_are_never_logged credentials_are_never_serialized_into_diagnostics credentials_are_never_present_in_process_argv sudo_password_is_only_written_to_stdin sessi..."
+                        heading
+                          text "2.6 Diagnostics"
+                        text "diagnostics_redacts_password diagnostics_redacts_sudo_password diagnostics_redacts_private_key diagnostics_redacts_token_like_values diagnostics_preserves_non_sensitive_context diagnostics_events_are_..."
+                        paragraph
+                          text "建议以后明确："
+                        text "任何用户可见失败 必须有 ErrorCode"
+                        paragraph
+                          text "例如："
+                        text "SSH_AUTH_FAILED SSH_HOST_KEY_CHANGED PROVISION_STEP_FAILED TUNNEL_START_FAILED RDP_CONNECT_FAILED RDP_ENGINE_CRASHED"
+                        heading
+                          text "2.7 Multi-session"
+                        text "multi_session_connect_two_devices_independently multi_session_disconnect_a_does_not_affect_b multi_session_reconnect_a_does_not_recreate_b_tunnel multi_session_active_focus_routes_to_correct_session m..."
+                        heading
+                          text "2.8 Frontend Zustand / React"
+                        paragraph
+                          text "如果使用 Vitest："
+                        text "session_store_add_session session_store_remove_session session_store_active_tab_switch session_store_stale_event_is_ignored session_store_state_snapshot_replaces_atomicly session_store_error_does_not_..."
+                        heading
+                          text "2.9 Provisioning Contract"
+                        text "provision_jsonl_each_line_is_valid_json provision_jsonl_sequence_is_monotonic provision_jsonl_has_run_id provision_jsonl_has_schema_version provision_step_check_before_apply provision_step_apply_only_..."
+                        heading
+                          text "2.10 Updater"
+                        text "update_valid_package_reaches_committed update_invalid_signature_never_installs update_interrupted_download_preserves_current_version update_interrupted_extract_preserves_current_version update_interru..."
+                        heading
+                          text "2.11 Device Trust"
+                        text "trust_first_seen_host_key_creates_tofu_record trust_same_host_key_same_machine_id_is_trusted trust_same_ip_changed_host_key_blocks_auto_connect trust_changed_host_key_same_machine_id_requires_confirma..."
+                        heading
+                          text "2.12 文件级变更"
+                        paragraph
+                          text "建议："
+                        text "apps/desktop/src-tauri/ ├── crates/ │ └── jr-test-support/ │ ├── src/ │ │ ├── fake_clock.rs │ │ ├── fake_ssh.rs │ │ ├── fake_tunnel.rs │ │ ├�..."
+                        heading
+                          text "2.13 本阶段完成即停"
+                        paragraph
+                          text "做到："
+                        text "Pure tests + Fake integration + Ubuntu VM provisioning + macOS FakeRdp lifecycle"
+                        paragraph
+                          text "全部稳定即可停。"
+                        paragraph
+                          text "不要继续追："
+                        text "JetPack-specific RDP FPS GPU acceleration 真实 clipboard latency 真实 IME edge cases"
+                        paragraph
+                          text "这些留给真机阶段。"
+                        heading
+                          text "2.14 本地验收命令"
+                        paragraph
+                          text "建议最终形成统一入口："
+                        text "pnpm test"
+                        text "cargo test --workspace"
+                        text "./scripts/test/provisioning-matrix.sh"
+                        text "./scripts/test/updater-fault-matrix.sh"
+                        paragraph
+                          text "最后："
+                        text "./scripts/test/all.sh"
+                        paragraph
+                          text "目标："
+                        text "all.sh ✓ rust unit ✓ frontend unit ✓ connection scenarios ✓ provisioning contract ✓ updater fault matrix ✓ trust matrix ✓ macOS session lifecycle"
+                        heading
+                          text "3. TOP2 — Provisioning V2"
+                        paragraph
+                          text "这是我建议本阶段第二优先级最高的事情。"
+                        paragraph
+                          text "核心原则："
+                        paragraph
+                          text "不重写 bootstrap 能力，只重写 bootstrap 的“契约”。"
+                        heading
+                          text "3.1 输出格式：明确选 JSON Lines"
+                        paragraph
+                          text "我的建议："
+                        heading
+                          text "JSONL"
+                        paragraph
+                          text "不要自己设计："
+                        text "STEP|XRDP|SUCCESS"
+                        paragraph
+                          text "这类 line protocol。"
+                        paragraph
+                          text "原因是你马上就会需要："
+                        text "error code before after duration step version restart requirement retryability"
+                        paragraph
+                          text "最终行协议一定又变成半个 JSON。"
+                        paragraph
+                          text "JSONL 正好同时满足："
+                        text "Streaming Structured Human-debuggable Shell-friendly Rust-friendly Backward-compatible"
+                        paragraph
+                          text "例如："
+                        container [ref=3584, loc=unstable]
+                          text "{"schema":"jr.provision.event/v1","seq":1,"run_id":"01JXYZ","type":"run_started","provisioner_version":"2.0.0"}"
+                        container [ref=3586, loc=unstable]
+                          text "{"schema":"jr.provision.event/v1","seq":2,"run_id":"01JXYZ","type":"step_started","step_id":"xrdp.package","step_version":1}"
+                        container [ref=3588, loc=unstable]
+                          text "{"schema":"jr.provision.event/v1","seq":3,"run_id":"01JXYZ","type":"step_result","step_id":"xrdp.package","step_version":1,"check":"needs_change","apply":"changed","verify":"passed","changed":true}"
+                        container [ref=3590, loc=unstable]
+                          text "{"schema":"jr.provision.event/v1","seq":4,"run_id":"01JXYZ","type":"run_completed","status":"success","changed":true}"
+                        heading
+                          text "3.2 stdout 与 stderr 必须严格分离"
+                        paragraph
+                          text "JSONL mode 下："
+                        text "stdout = protocol only"
+                        paragraph
+                          text "绝对不要："
+                        text "Installing XRDP..."
+                        paragraph
+                          text "混进 stdout。"
+                        paragraph
+                          text "普通 apt / systemctl 输出："
+                        text "stderr"
+                        paragraph
+                          text "或者内部捕获后："
+                        text "{ "type": "log", "level": "debug" }"
+                        paragraph
+                          text "但第一版甚至不需要传所有日志。"
+                        heading
+                          text "3.3 不要设计一个"
+                          text "idempotent: true"
+                        paragraph
+                          text "这一点很重要。"
+                        paragraph
+                          text "幂等不是一个声明。"
+                        paragraph
+                          text "它应该由执行结果证明。"
+                        paragraph
+                          text "建议每个 step 的结果统一为："
+                        text "{ "step_id": "xrdp.config", "step_version": 2, "check": "satisfied", "apply": "not_run", "verify": "passed", "changed": false }"
+                        paragraph
+                          text "状态允许："
+                        heading
+                          text "check"
+                        text "satisfied needs_change unknown"
+                        heading
+                          text "apply"
+                        text "not_run noop changed failed"
+                        heading
+                          text "verify"
+                        text "passed failed not_run"
+                        paragraph
+                          text "那么："
+                        text "第二次执行： check = satisfied apply = not_run changed = false verify = passed"
+                        paragraph
+                          text "这才是真正可测试的幂等。"
+                        heading
+                          text "3.4 每个 step 的最小 contract"
+                        paragraph
+                          text "概念上："
+                        text "check() apply() verify()"
+                        paragraph
+                          text "Shell 中可以："
+                        text "step_xrdp_package_check step_xrdp_package_apply step_xrdp_package_verify"
+                        paragraph
+                          text "目录建议："
+                        text "remote/ ├── bootstrap.sh └── provision/ ├── runner.sh ├── protocol.sh ├── context.sh └── steps/ ├── 010_detect_os.sh ├── 020_xrdp_package.sh ├── 0..."
+                        paragraph
+                          text "编号只用于稳定执行顺序。"
+                        paragraph
+                          text "逻辑 ID 不要包含编号："
+                        text "xrdp.package xrdp.config xorgxrdp.config xfce.session xrdp.permissions services.xrdp environment.verify"
+                        heading
+                          text "3.5 Step Version"
+                        paragraph
+                          text "每个 step 自己拥有："
+                        text "step_version"
+                        paragraph
+                          text "例如："
+                        text "JR_STEP_ID="xrdp.config" JR_STEP_VERSION=3"
+                        paragraph
+                          text "为什么？"
+                        paragraph
+                          text "因为："
+                        text "Provisioner 2.4.0"
+                        paragraph
+                          text "可能只修改："
+                        text "xrdp.config"
+                        paragraph
+                          text "而不是整套 recipe。"
+                        paragraph
+                          text "Diagnostics 可以看到："
+                        text "xrdp.config@3"
+                        paragraph
+                          text "非常有价值。"
+                        heading
+                          text "3.6 三种 Version 必须区分"
+                        paragraph
+                          text "不要混成一个版本号。"
+                        heading
+                          text "Protocol schema"
+                        text "jr.provision.event/v1"
+                        paragraph
+                          text "定义："
+                        text "Rust 如何解析 JSON"
+                        heading
+                          text "Provisioner version"
+                        text "2.0.0"
+                        paragraph
+                          text "定义："
+                        text "整套 provisioning 软件版本"
+                        heading
+                          text "Step version"
+                        text "xrdp.config@3"
+                        paragraph
+                          text "定义："
+                        text "这个 step 的 desired state 发生过几次语义变化"
+                        heading
+                          text "3.7 是否需要保存 remote state？"
+                        paragraph
+                          text "可以保存。"
+                        paragraph
+                          text "但："
+                        paragraph
+                          text "它只能是 cache，不能是真相。"
+                        paragraph
+                          text "建议："
+                        text "/var/lib/jetson-remote/provision-state.json"
+                        paragraph
+                          text "例如："
+                        text "{ "last_successful_provisioner": "2.0.0", "last_success": "2026-09-08T...", "profile": "ubuntu-22.04", "steps": { "xrdp.config": 3, "xfce.session": 2 } }"
+                        paragraph
+                          text "但是下一次启动绝不能："
+                        text "state.json says success → skip checks"
+                        paragraph
+                          text "必须："
+                        text "check actual system"
+                        paragraph
+                          text "因为用户可能手动改配置。"
+                        heading
+                          text "3.8 向后兼容现有 bootstrap.sh"
+                        paragraph
+                          text "这是最重要的迁移设计。"
+                        paragraph
+                          text "不要立即改变旧调用语义。"
+                        paragraph
+                          text "建议："
+                        text "bootstrap.sh"
+                        paragraph
+                          text "继续作为稳定入口。"
+                        paragraph
+                          text "第一阶段："
+                        text "bootstrap.sh │ ├── 无参数 │ │ Legacy Mode │ │ 保持当前输出 + exit code │ │ └── --protocol jsonl │ └── Provisioning V2"
+                        paragraph
+                          text "也就是："
+                        text "./bootstrap.sh"
+                        paragraph
+                          text "旧客户端完全不受影响。"
+                        paragraph
+                          text "新客户端："
+                        text "./bootstrap.sh \ --protocol jsonl \ --run-id "$RUN_ID""
+                        heading
+                          text "3.9 更保守的迁移方式"
+                        paragraph
+                          text "如果你害怕第一次就把原脚本拆坏，可以："
+                        text "bootstrap.sh bootstrap_legacy.sh provision/runner.sh"
+                        paragraph
+                          text "初期："
+                        text "bootstrap.sh no args → bootstrap_legacy.sh"
+                        text "bootstrap.sh --protocol jsonl → provision/runner.sh"
+                        paragraph
+                          text "等 V2 经过充分验证，再让："
+                        text "legacy mode"
+                        paragraph
+                          text "也内部复用新 steps。"
+                        paragraph
+                          text "这比“一次性重构原脚本”安全很多。"
+                        paragraph
+                          text "我更推荐这个方案。"
+                        heading
+                          text "3.10 Error object"
+                        paragraph
+                          text "统一："
+                        text "{ "error": { "code": "XRDP_SERVICE_START_FAILED", "message": "xrdp service failed to reach active state", "retryable": true, "command_exit_code": 1 } }"
+                        paragraph
+                          text "前端禁止解析："
+                        text "英文错误字符串"
+                        paragraph
+                          text "进行逻辑判断。"
+                        paragraph
+                          text "只能根据："
+                        text "error.code"
+                        heading
+                          text "3.11 interruption / resume"
+                        paragraph
+                          text "第一版不需要："
+                        text "从 step 57 的 shell instruction 继续"
+                        paragraph
+                          text "那么复杂。"
+                        paragraph
+                          text "只需要："
+                        text "重新运行整个 runner ↓ 之前已满足的 step check=satisfied ↓ 自动跳过 apply"
+                        paragraph
+                          text "这已经实现 resumable。"
+                        paragraph
+                          text "也就是："
+                        paragraph
+                          text "resume by idempotency"
+                        paragraph
+                          text "而不是："
+                        paragraph
+                          text "resume by program counter"
+                        paragraph
+                          text "后者不要做。"
+                        heading
+                          text "3.12 本阶段里程碑"
+                        paragraph
+                          text "达到以下状态就停："
+                        text "旧 bootstrap 调用没有行为变化"
+                        text "新 --protocol jsonl 可以完整跑"
+                        text "JSONL parser 有 contract tests"
+                        text "连续执行 3 次： 第一次 changed 后两次 changed=false"
+                        text "随机在 step 后 kill 重新运行可以收敛"
+                        text "Ubuntu 20.04 / 22.04 / 24.04 VM 协议均工作"
+                        paragraph
+                          text "暂时不要针对："
+                        text "JetPack BSP NVIDIA desktop 特例"
+                        paragraph
+                          text "做新修复。"
+                        paragraph
+                          text "已有规则保留即可。"
+                        heading
+                          text "3.13 验收命令"
+                        paragraph
+                          text "例如："
+                        text "./remote/bootstrap.sh"
+                        paragraph
+                          text "验证 legacy。"
+                        paragraph
+                          text "然后："
+                        text "./remote/bootstrap.sh \ --protocol jsonl \ --run-id test-001 \ | jq -c ."
+                        paragraph
+                          text "重复："
+                        text "for i in 1 2 3; do ./remote/bootstrap.sh \ --protocol jsonl \ --run-id "idem-$i" done"
+                        paragraph
+                          text "然后："
+                        text "./scripts/test/provisioning-matrix.sh"
+                        paragraph
+                          text "最终要求报告："
+                        text "Ubuntu 20.04 PASS Ubuntu 22.04 PASS Ubuntu 24.04 PASS JSONL contract PASS Idempotency PASS Resume PASS Legacy mode PASS"
+                        heading
+                          text "4. TOP3 — Embedded Session Architecture"
+                        paragraph
+                          text "这一阶段不要继续“优化 FreeRDP”。"
+                        paragraph
+                          text "核心任务："
+                        heading
+                          text "冻结边界。"
+                        paragraph
+                          text "让以后任何 FreeRDP bug："
+                        text "不会传播到整个 App。"
+                        heading
+                          text "4.1 目标架构"
+                        paragraph
+                          text "建议收敛为："
+                        text "React │ │ Tauri IPC ▼ SessionService │ ▼ RdpSessionManager │ ├── SessionRegistry ├── FocusCoordinator ├── ClipboardCoordinator ├── RecoveryPolicy └── SessionS..."
+                        paragraph
+                          text "Native View 独立："
+                        text "RdpSessionManager │ ▼ NativeSurfaceHost"
+                        paragraph
+                          text "而不是让："
+                        text "FreeRDP bridge"
+                        paragraph
+                          text "同时管理："
+                        text "Cocoa Window session tunnel clipboard policy retry"
+                        heading
+                          text "4.2 建议文件结构"
+                        text "src-tauri/src/ ├── session/ │ ├── mod.rs │ ├── manager.rs │ ├── registry.rs │ ├── model.rs │ ├── state.rs │ ├── recovery.rs │ ├── focus.rs..."
+                        paragraph
+                          text "C："
+                        text "src-tauri/native/freerdp/ ├── jr_freerdp_bridge.h └── jr_freerdp_bridge.c"
+                        heading
+                          text "4.3 RdpAdapter / RdpEngine 应该收哪些 API"
+                        paragraph
+                          text "接口尽量窄。"
+                        paragraph
+                          text "建议："
+                        text "trait RdpEngine { fn start( &self, config: RdpConnectConfig, surface: NativeSurfaceHandle, event_sink: Arc<dyn RdpEventSink>, ) -> Result<RdpEngineHandle, RdpError>; fn stop( &self, handle: RdpEngineH..."
+                        paragraph
+                          text "够了。"
+                        heading
+                          text "4.4 不要暴露 FreeRDP 类型"
+                        paragraph
+                          text "接口中禁止："
+                        text "freerdp* rdpContext* CliprdrClientContext* RdpgfxClientContext* NSView* CALayer* void*"
+                        paragraph
+                          text "Native handle 应该包装："
+                        text "struct NativeSurfaceHandle(...)"
+                        paragraph
+                          text "Opaque。"
+                        paragraph
+                          text "前端更不能知道。"
+                        heading
+                          text "4.5 Adapter Event"
+                        paragraph
+                          text "建议只暴露："
+                        text "enum RdpEngineEvent { Connecting, Connected { desktop_size: DesktopSize, }, Disconnected { reason: RdpDisconnectReason, }, Error { code: RdpErrorCode, retryable: bool, }, ClipboardOffer { formats: Vec..."
+                        paragraph
+                          text "第一阶段甚至："
+                        text "Metrics"
+                        paragraph
+                          text "都可以不做。"
+                        heading
+                          text "4.6 SessionManager 应该拥有的东西"
+                        paragraph
+                          text "以下全部必须在 bridge 外："
+                        text "session_id device_id attempt_id SSH association tunnel ownership reconnect policy retry/backoff active tab focus ownership clipboard ownership IME ownership viewport connection state diagnostics timel..."
+                        heading
+                          text "4.7 C Bridge 只允许拥有"
+                        paragraph
+                          text "C Bridge 最终应该接近："
+                        text "FreeRDP context creation FreeRDP context destruction FreeRDP connection FreeRDP event loop channel initialization RDPGFX callbacks CLIPRDR serialization input packet translation drawing into provided ..."
+                        paragraph
+                          text "它应该是："
+                        paragraph
+                          text "Dumb protocol adapter."
+                        paragraph
+                          text "而不是 application controller。"
+                        heading
+                          text "4.8 必须移出 Bridge 的现有实现细节"
+                        paragraph
+                          text "如果现在存在以下任何逻辑，逐步搬出去："
+                        text "Tunnel creation Tunnel PID tracking SSH credentials Device credentials Keychain access Reconnect timer Reconnect count Backoff Tab ID Active device Focused device Global clipboard ownership Clipboard ..."
+                        paragraph
+                          text "尤其是："
+                        text "Tauri AppHandle"
+                        paragraph
+                          text "最好不要出现在 FreeRDP C bridge 这一层。"
+                        heading
+                          text "4.9 NativeSurfaceHost"
+                        paragraph
+                          text "建议专门抽："
+                        container [ref=4001, loc=unstable]
+                          text "trait NativeSurfaceHost { fn create(&self, session_id: SessionId) -> Result<NativeSurfaceHandle>; fn attach(&self, session_id: SessionId); fn detach(&self, session_id: SessionId); fn resize(&self, ses..."
+                        paragraph
+                          text "这个模块负责："
+                        text "NSView CALayer main-thread dispatch view geometry"
+                        paragraph
+                          text "FreeRDP 只拿："
+                        text "NativeSurfaceHandle"
+                        heading
+                          text "4.10 React ↔ Rust IPC：只保留高层命令"
+                        paragraph
+                          text "建议前端最终只知道："
+                        text "session_connect session_disconnect session_reconnect session_set_active session_resize session_get_snapshot"
+                        paragraph
+                          text "如果 credentials 从 UI 初次输入："
+                        text "session_connect"
+                        paragraph
+                          text "可以携带一次性 secret。"
+                        paragraph
+                          text "但 Rust 收到后立刻进入："
+                        text "SecretString / Zeroizing"
+                        paragraph
+                          text "不要写进 store。"
+                        heading
+                          text "4.11 前端不应该存在的 IPC"
+                        paragraph
+                          text "禁止："
+                        text "rdp_send_key rdp_mouse_move rdp_mouse_click rdp_clipboard_channel rdpgfx_frame freerdp_resize freerdp_reconnect tunnel_restart xrdp_channel_event"
+                        paragraph
+                          text "这些都是："
+                        paragraph
+                          text "implementation detail leakage"
+                        heading
+                          text "4.12 React 接收什么 event"
+                        paragraph
+                          text "我建议不要发几十种 Tauri event。"
+                        paragraph
+                          text "直接："
+                        text "session_snapshot_changed"
+                        paragraph
+                          text "内容："
+                        text "{ "session_id": "S1", "device_id": "D1", "state": "connected", "active": true, "viewport": { "width": 1440, "height": 900 }, "error": null }"
+                        paragraph
+                          text "Rust 是："
+                        paragraph
+                          text "Source of Truth."
+                        paragraph
+                          text "React 是："
+                        paragraph
+                          text "Projection."
+                        paragraph
+                          text "这样你现在正确的："
+                        text "单一 ConnectionState"
+                        paragraph
+                          text "理念可以继续保留。"
+                        heading
+                          text "4.13 内部状态建议再拆一层"
+                        paragraph
+                          text "UI："
+                        text "ConnectionState"
+                        paragraph
+                          text "保持不变。"
+                        paragraph
+                          text "内部："
+                        text "struct SessionRuntimeState { ssh: SshState, provision: ProvisionState, tunnel: TunnelState, rdp: RdpState, }"
+                        paragraph
+                          text "然后："
+                        text "derive_connection_state()"
+                        paragraph
+                          text "给 UI。"
+                        paragraph
+                          text "避免未来 enum 爆炸。"
+                        heading
+                          text "4.14 FakeRdpAdapter"
+                        paragraph
+                          text "TOP1 和 TOP3 结合的关键。"
+                        paragraph
+                          text "写："
+                        text "FakeRdpAdapter"
+                        paragraph
+                          text "允许 scenario："
+                        text "FakeRdpScenario::new() .connect_success() .disconnect_after(EventCount(5))"
+                        paragraph
+                          text "或者："
+                        text ".connect_error(RdpErrorCode::TransportClosed)"
+                        paragraph
+                          text "这样可以跑："
+                        text "1000 次"
+                        paragraph
+                          text "生命周期测试而无需 FreeRDP。"
+                        heading
+                          text "4.15 第一批 SessionManager 测试"
+                        text "session_connect_creates_exactly_one_engine session_disconnect_stops_exactly_one_engine session_engine_error_transitions_to_error session_retry_creates_new_attempt_id session_stale_engine_callback_is_i..."
+                        paragraph
+                          text "尤其："
+                        text "cleanup order"
+                        paragraph
+                          text "建议明确："
+                        text "stop RDP ↓ detach surface ↓ destroy surface ↓ close tunnel ↓ release secrets ↓ remove session"
+                        paragraph
+                          text "不要靠 Drop 顺序偶然成立。"
+                        heading
+                          text "4.16 本阶段完成即停"
+                        paragraph
+                          text "满足："
+                        text "前端不存在 FreeRDP-specific IPC"
+                        text "SessionManager 可以完整跑 FakeRdpAdapter"
+                        text "FreeRDP bridge 不知道 tunnel/device/tab"
+                        text "所有异步 callback 带 session_id + attempt_id"
+                        text "multi-session lifecycle tests 全绿"
+                        text "真实 FreeRDP adapter 能编译"
+                        paragraph
+                          text "如果 Ubuntu VM XRDP 可用，再做："
+                        text "单 session smoke connection"
+                        paragraph
+                          text "就停。"
+                        paragraph
+                          text "不要做："
+                        text "FPS tuning RDPGFX optimization codec tuning"
+                        heading
+                          text "4.17 验收命令"
+                        text "cargo test -p jr-session"
+                        text "cargo test -p jr-session \ session_"
+                        text "cargo test --workspace \ multi_session"
+                        paragraph
+                          text "然后："
+                        text "pnpm test"
+                        paragraph
+                          text "最后 debug 构建："
+                        text "pnpm tauri build --debug"
+                        paragraph
+                          text "确保："
+                        text "FFI adapter NativeSurfaceHost SessionManager"
+                        paragraph
+                          text "全部能链接。"
+                        heading
+                          text "5. TOP4-A — Updater Rollback"
+                        paragraph
+                          text "Updater 第一阶段不要直接拿真实"
+                          text "/Applications"
+                          text "做 fault injection。"
+                        paragraph
+                          text "应该先把 updater 核心做成："
+                        paragraph
+                          text "filesystem transaction engine"
+                        paragraph
+                          text "然后在："
+                        text "/tmp"
+                        paragraph
+                          text "中模拟完整 App。"
+                        heading
+                          text "5.1 状态机"
+                        paragraph
+                          text "建议："
+                        text "Idle ↓ Downloading ↓ Downloaded ↓ Verifying ↓ Verified ↓ Staging ↓ Staged ↓ BackingUp ↓ Installing ↓ PendingHealth ↓ Committed"
+                        paragraph
+                          text "任意安装阶段失败："
+                        text "RecoveryRequired ↓ RollingBack ↓ RolledBack"
+                        paragraph
+                          text "如果 rollback 也失败："
+                        text "FailedSafe"
+                        paragraph
+                          text "但 FailedSafe 必须满足："
+                        paragraph
+                          text "至少 current 或 backup 有一个完整 bundle。"
+                        heading
+                          text "5.2 Transaction Journal"
+                        paragraph
+                          text "Updater 不应该只靠内存状态。"
+                        paragraph
+                          text "每次更新生成："
+                        text "transaction_id"
+                        paragraph
+                          text "例如："
+                        text "01JUPDATEABC"
+                        paragraph
+                          text "写："
+                        text "state.json"
+                        heading
+                          text "5.3 推荐文件布局"
+                        paragraph
+                          text "逻辑布局："
+                        text "UpdaterRoot/ ├── state.json ├── lock │ ├── transactions/ │ └── 01JUPDATEABC/ │ ├── manifest.json │ ├── journal.jsonl │ ├── downloaded/ │ ├──..."
+                        paragraph
+                          text "生产中："
+                        text "UpdaterRoot"
+                        paragraph
+                          text "可以放："
+                        text "~/Library/Application Support/Jetson Remote/updater/"
+                        paragraph
+                          text "但是："
+                        paragraph
+                          text "staged app 最终安装前，应该保证和目标 App 位于可安全 rename 的 filesystem。"
+                        paragraph
+                          text "不要假设："
+                        text "/tmp"
+                        paragraph
+                          text "和："
+                        text "/Applications"
+                        paragraph
+                          text "永远可以原子 rename。"
+                        paragraph
+                          text "生产实现应动态判断 destination volume。"
+                        heading
+                          text "5.4 state.json"
+                        paragraph
+                          text "例如："
+                        text "{ "schema": 1, "transaction_id": "01JUPDATEABC", "from_version": "0.3.7", "to_version": "0.4.0", "phase": "pending_health", "current_path": "/Applications/Jetson Remote.app", "backup_path": "...", "st..."
+                        paragraph
+                          text "每个 phase 变化："
+                        text "先持久化 再执行不可逆操作"
+                        heading
+                          text "5.5 安装顺序"
+                        paragraph
+                          text "建议："
+                        text "Download ↓ Hash Verify ↓ Signature Verify ↓ Extract ↓ Bundle Integrity Check ↓ Stage on target filesystem ↓ Persist: BACKING_UP ↓ Move current → backup ↓ Persist: INSTALLING ↓ Move..."
+                        heading
+                          text "5.6 Health Check 不允许包含网络检查"
+                        paragraph
+                          text "不要："
+                        text "能否连接 Jetson"
+                        paragraph
+                          text "作为 update health。"
+                        paragraph
+                          text "否则："
+                        text "Jetson 关机 Wi-Fi 断了"
+                        paragraph
+                          text "会触发错误 rollback。"
+                        paragraph
+                          text "Health 必须只证明："
+                        paragraph
+                          text "新版本 App 自己健康。"
+                        heading
+                          text "5.7 推荐 health criteria"
+                        paragraph
+                          text "新 App 必须完成："
+                        text "✓ Tauri runtime initialized ✓ main window successfully created ✓ config database/store opened ✓ schema migration completed ✓ updater state readable ✓ session subsystem initialized ✓ nati..."
+                        paragraph
+                          text "完成后："
+                        text "commit_health()"
+                        paragraph
+                          text "写："
+                        text "{ "transaction_id": "...", "app_version": "0.4.0", "status": "healthy" }"
+                        heading
+                          text "5.8 不要单纯用“启动 5 秒没 crash”"
+                        paragraph
+                          text "因为："
+                        text "window 没出来 session subsystem 崩了 数据库打不开"
+                        paragraph
+                          text "都有可能进程仍然活着。"
+                        paragraph
+                          text "最好使用："
+                        text "明确 AppReady checkpoint"
+                        heading
+                          text "5.9 Fault Injection"
+                        paragraph
+                          text "统一环境变量："
+                        text "JR_FAULT_INJECT"
+                        paragraph
+                          text "仅："
+                        text "debug test"
+                        paragraph
+                          text "编译启用。"
+                        paragraph
+                          text "生产 release 禁止。"
+                        heading
+                          text "Download"
+                        text "updater.download.before updater.download.mid updater.download.after"
+                        heading
+                          text "Extract"
+                        text "updater.extract.before updater.extract.mid updater.extract.after"
+                        heading
+                          text "Install"
+                        text "updater.backup.before updater.backup.after updater.swap.before updater.swap.after"
+                        heading
+                          text "Launch"
+                        text "updater.launch.before updater.launch.after"
+                        heading
+                          text "Health"
+                        text "app.start.before_runtime app.start.after_runtime app.start.before_window app.start.after_window app.start.before_health_commit app.start.after_health_commit"
+                        paragraph
+                          text "fault 行为支持："
+                        text "error panic process_exit"
+                        paragraph
+                          text "最有价值的是："
+                        text "process_exit"
+                        paragraph
+                          text "真正模拟突然 kill。"
+                        heading
+                          text "5.10 关键恢复测试"
+                        paragraph
+                          text "每个 injection point："
+                        text "执行 update ↓ kill ↓ 重新启动 updater recovery"
+                        paragraph
+                          text "最终必须满足："
+                        text "Current = new healthy version"
+                        paragraph
+                          text "或者："
+                        text "Current = previous known-good"
+                        paragraph
+                          text "绝对不能："
+                        text "Current missing"
+                        paragraph
+                          text "或者："
+                        text "两个 bundle 都 incomplete"
+                        heading
+                          text "5.11 Updater 模块"
+                        text "src/updater/ ├── mod.rs ├── state.rs ├── transaction.rs ├── journal.rs ├── download.rs ├── verify.rs ├── stage.rs ├── install.rs ├── recovery.rs �..."
+                        paragraph
+                          text "关键是："
+                        text "transaction.rs recovery.rs"
+                        paragraph
+                          text "必须和："
+                        text "Tauri UI"
+                        paragraph
+                          text "解耦。"
+                        heading
+                          text "5.12 本地 Sandbox"
+                        paragraph
+                          text "测试时："
+                        text "/tmp/jr-updater-test/ ├── Applications/ │ └── Jetson Remote.app └── Application Support/ └── Jetson Remote/"
+                        paragraph
+                          text "完全不用动真实 App。"
+                        heading
+                          text "5.13 本阶段完成即停"
+                        paragraph
+                          text "满足："
+                        text "所有 fault point 都执行"
+                        paragraph
+                          text "并且："
+                        text "任何 interruption 后重新启动 recovery 最终都有可启动版本"
+                        paragraph
+                          text "即可停。"
+                        paragraph
+                          text "暂时不要重新设计："
+                        text "update server release CDN delta update background download"
+                        heading
+                          text "5.14 本地验收"
+                        text "cargo test -p jr-updater"
+                        paragraph
+                          text "然后："
+                        text "./scripts/test/updater-fault-matrix.sh"
+                        paragraph
+                          text "期待："
+                        text "download.mid PASS extract.mid PASS backup.after PASS swap.before PASS swap.after PASS launch.after PASS before_health_commit PASS"
+                        heading
+                          text "6. TOP4-B — Device Trust"
+                        paragraph
+                          text "这里需要区分两个完全不同的 identity："
+                        text "SSH Host Identity"
+                        paragraph
+                          text "与："
+                        text "Jetson Product Identity"
+                        paragraph
+                          text "前者是安全。"
+                        paragraph
+                          text "后者是产品逻辑。"
+                        paragraph
+                          text "不能混在一起。"
+                        heading
+                          text "6.1 SSH Identity"
+                        paragraph
+                          text "来自："
+                        text "SSH host key"
+                        paragraph
+                          text "例如："
+                        text "ssh-ed25519 SHA256:..."
+                        paragraph
+                          text "它回答："
+                        paragraph
+                          text "这次 SSH server 是否还是我以前信任的那个 server？"
+                        heading
+                          text "6.2 Product Identity"
+                        paragraph
+                          text "来自："
+                        text "machine-id serial fallback fingerprint"
+                        paragraph
+                          text "它回答："
+                        paragraph
+                          text "这是不是 Jetson Remote 里面以前记录的那台设备？"
+                        heading
+                          text "6.3 TrustRecord"
+                        paragraph
+                          text "建议："
+                        text "struct DeviceTrustRecord { logical_device_id: DeviceId, machine_id: Option<String>, serial: Option<String>, trusted_host_keys: Vec<HostKeyRecord>, known_addresses: Vec<KnownAddress>, first_seen_at: Ti..."
+                        paragraph
+                          text "HostKey："
+                        text "struct HostKeyRecord { algorithm: String, fingerprint: String, state: HostKeyState, }"
+                        heading
+                          text "6.4 首次连接：TOFU"
+                        paragraph
+                          text "第一次："
+                        text "IP ↓ SSH returns host key ↓ Unknown key ↓ TOFU candidate"
+                        paragraph
+                          text "用户正常点击 Connect。"
+                        paragraph
+                          text "产品不需要弹专业 SSH 对话框。"
+                        paragraph
+                          text "可以："
+                        text "正在首次验证设备身份…"
+                        paragraph
+                          text "成功认证、读取 machine-id 后："
+                        text "Host Key + machine-id + serial"
+                        paragraph
+                          text "共同保存。"
+                        heading
+                          text "6.5 以后正常连接"
+                        text "same host key + same product identity"
+                        paragraph
+                          text "直接："
+                        text "Trusted"
+                        paragraph
+                          text "无需用户感知。"
+                        heading
+                          text "6.6 最重要规则"
+                        heading
+                          text "Host key mismatch 永远禁止自动重连。"
+                        paragraph
+                          text "即使："
+                        text "IP 一样 设备名一样 machine-id 缓存一样"
+                        paragraph
+                          text "也不能静默接受。"
+                        paragraph
+                          text "因为 machine-id 是："
+                        text "SSH 成功以后"
+                        paragraph
+                          text "才能拿到的。"
+                        paragraph
+                          text "Host key 是第一道安全 gate。"
+                        heading
+                          text "6.7 mismatch 时 UX 不要直接显示 SSH 术语"
+                        paragraph
+                          text "第一屏："
+                        text "设备身份发生变化 Jetson Remote 检测到 192.168.1.20 的安全身份 与之前保存的记录不同。 这可能发生在： • Jetson 重刷系统 • SSH 配置被重新生成 • 该 IP �..."
+                        paragraph
+                          text "按钮："
+                        text "取消 验证这台设备"
+                        paragraph
+                          text "不要第一屏就："
+                        text "Replace ECDSA SHA256 fingerprint?"
+                        heading
+                          text "6.8 “验证这台设备”是什么意思"
+                        paragraph
+                          text "允许："
+                        text "temporary trust"
+                        paragraph
+                          text "只针对这一轮。"
+                        paragraph
+                          text "然后："
+                        text "SSH authenticate ↓ read machine-id ↓ read serial"
+                        paragraph
+                          text "注意："
+                        paragraph
+                          text "temporary trust 不能自动写永久 trust store。"
+                        paragraph
+                          text "之后再裁决。"
+                        heading
+                          text "6.9 冲突决策矩阵"
+                        heading
+                          text "情况 A"
+                        text "Host key changed Machine-id same Serial same"
+                        paragraph
+                          text "结论："
+                        text "大概率 SSH host keys 被重建。"
+                        paragraph
+                          text "UX："
+                        container
+                          text "这看起来仍然是原来的 Jetson， 但它的 SSH 安全身份已重新生成。"
+                          text "[更新受信任身份]"
+                          text
+                          text "[取消]"
+                        paragraph
+                          text "更新后："
+                        text "旧 host key → revoked 新 host key → trusted"
+                        heading
+                          text "情况 B"
+                        text "Host key changed Machine-id changed Serial same"
+                        paragraph
+                          text "这非常像："
+                        text "Jetson 被重新刷机"
+                        paragraph
+                          text "UX："
+                        container
+                          text "检测到这台 Jetson 可能已重新刷机。 硬件序列号与之前一致， 但系统身份和 SSH 身份都发生了变化。"
+                          text "[重新登记此设备]"
+                          text
+                          text "[作为新设备添加]"
+                          text
+                          text "[取消]"
+                        paragraph
+                          text "默认推荐："
+                        text "重新登记此设备"
+                        paragraph
+                          text "但不要静默执行。"
+                        heading
+                          text "情况 C"
+                        text "Host key changed Machine-id changed Serial changed"
+                        paragraph
+                          text "或者 serial 不匹配。"
+                        paragraph
+                          text "结论："
+                        text "大概率 IP 被另一台设备占用。"
+                        paragraph
+                          text "UX："
+                        container
+                          text "这似乎不是之前保存的那台 Jetson。 192.168.1.20 现在对应另一台设备。"
+                          text "[作为新设备添加]"
+                          text
+                          text "[取消]"
+                        paragraph
+                          text "不要提供："
+                        text "继续当成旧设备"
+                        paragraph
+                          text "作为主选项。"
+                        heading
+                          text "情况 D"
+                        text "Host key same Machine-id changed Serial same"
+                        paragraph
+                          text "可能："
+                        text "系统重新生成 machine-id"
+                        paragraph
+                          text "允许重新登记。"
+                        heading
+                          text "情况 E"
+                        text "Host key same Machine-id changed Serial changed"
+                        paragraph
+                          text "非常异常。"
+                        paragraph
+                          text "可能："
+                        text "镜像复制了 SSH host key"
+                        paragraph
+                          text "或者克隆系统。"
+                        paragraph
+                          text "这不能直接信任为旧设备。"
+                        paragraph
+                          text "显示："
+                        text "设备身份冲突"
+                        paragraph
+                          text "建议："
+                        text "作为新设备添加"
+                        heading
+                          text "6.10 Credentials 的裁决"
+                        paragraph
+                          text "这是安全关键。"
+                        paragraph
+                          text "Keychain 不能绑定："
+                        text "192.168.1.20"
+                        paragraph
+                          text "应该绑定："
+                        text "logical_device_id"
+                        paragraph
+                          text "而 logical_device_id 的 trust 状态发生冲突时："
+                        text "Saved credential auto-use = disabled"
+                        paragraph
+                          text "直到用户确认："
+                        text "Re-enroll"
+                        paragraph
+                          text "或者："
+                        text "Add New Device"
+                        heading
+                          text "6.11 自动重连的规则"
+                        paragraph
+                          text "正常："
+                        text "Trusted identity ↓ Auto reconnect"
+                        paragraph
+                          text "任何："
+                        text "HOST_KEY_CHANGED DEVICE_IDENTITY_CONFLICT"
+                        paragraph
+                          text "立即："
+                        text "Auto reconnect suspended"
+                        paragraph
+                          text "不能："
+                        text "不断每 5 秒重新试密码"
+                        heading
+                          text "6.12 Trust 模块"
+                        text "src/trust/ ├── mod.rs ├── model.rs ├── host_key.rs ├── device_identity.rs ├── evaluator.rs ├── store.rs └── decision.rs"
+                        paragraph
+                          text "核心："
+                        text "evaluate_trust( previous, observed_host_key, observed_machine_id, observed_serial, ) -> TrustDecision"
+                        paragraph
+                          text "这应该是一个纯函数。"
+                        paragraph
+                          text "因此特别容易做单元测试。"
+                        heading
+                          text "6.13 TrustDecision"
+                        paragraph
+                          text "建议："
+                        text "enum TrustDecision { Trusted, FirstSeen, HostKeyChangedNeedsVerification, ReEnrollSameHardware, NewDeviceAtKnownAddress, IdentityConflict, Blocked, }"
+                        paragraph
+                          text "UI 只根据这个 enum。"
+                        paragraph
+                          text "不要自己组合："
+                        text "if host_changed && machine_changed..."
+                        paragraph
+                          text "前端禁止做 trust business logic。"
+                        heading
+                          text "6.14 本阶段完成即停"
+                        paragraph
+                          text "达到："
+                        text "所有 identity decision 都有 deterministic unit test"
+                        text "host key mismatch 禁止自动 reconnect"
+                        text "mismatch 禁止自动使用 saved credentials"
+                        text "Keychain binding 从 IP 转 logical_device_id"
+                        paragraph
+                          text "即可。"
+                        paragraph
+                          text "不需要真 Jetson。"
+                        paragraph
+                          text "可以使用本地："
+                        text "OpenSSH server"
+                        paragraph
+                          text "生成不同 host key 做 integration test。"
+                        heading
+                          text "6.15 本地验收"
+                        text "cargo test -p jr-device-trust"
+                        paragraph
+                          text "额外："
+                        text "./scripts/test/ssh-host-key-rotation.sh"
+                        paragraph
+                          text "脚本可以："
+                        text "启动 sshd A 连接 记录 停止 更换 host key 启动 sshd B 验证： HOST_KEY_CHANGED"
+                        heading
+                          text "7. 四块之间的依赖关系"
+                        paragraph
+                          text "不是简单："
+                        text "1 → 2 → 3 → 4"
+                        paragraph
+                          text "实际是："
+                        text "Reliability Harness │ ┌────────────┼────────────┐ │ │ │ ▼ ▼ ▼ Provisioning V2 Session Arch Updater/Trust │ │ │ └────..."
+                        paragraph
+                          text "所以："
+                        heading
+                          text "Harness 是唯一真正的前置依赖。"
+                        paragraph
+                          text "其他三块可以部分并行。"
+                        heading
+                          text "8. 推荐实施 SOP"
+                        heading
+                          text "Phase 0 — Freeze Contracts"
+                        paragraph
+                          text "第一件事情不是写功能。"
+                        paragraph
+                          text "先定义："
+                        text "SessionId AttemptId DeviceId RunId ErrorCode Event envelope FaultInjector API"
+                        paragraph
+                          text "例如所有长期异步操作必须拥有："
+                        text "session_id attempt_id"
+                        paragraph
+                          text "所有 provisioning："
+                        text "run_id"
+                        paragraph
+                          text "所有 updater："
+                        text "transaction_id"
+                        paragraph
+                          text "这四种 ID 会解决非常多异步竞态问题。"
+                        heading
+                          text "Phase 1 — Reliability Harness Foundation"
+                        paragraph
+                          text "优先落："
+                        text "FakeClock FakeRdpAdapter FakeTunnel EventRecorder FaultInjector"
+                        paragraph
+                          text "同时建立："
+                        text "./scripts/test/all.sh"
+                        paragraph
+                          text "哪怕第一天只有："
+                        text "8 tests"
+                        paragraph
+                          text "也没有关系。"
+                        paragraph
+                          text "关键是所有后续工作："
+                        paragraph
+                          text "必须进入这套 Harness。"
+                        heading
+                          text "Phase 2A — Provisioning V2"
+                        paragraph
+                          text "可以由一个 Agent/分支独立进行。"
+                        paragraph
+                          text "主要改："
+                        text "remote/bootstrap.sh remote/provision/* src/provision/*"
+                        paragraph
+                          text "依赖："
+                        text "Harness"
+                        paragraph
+                          text "不依赖："
+                        text "Session Architecture Updater"
+                        heading
+                          text "Phase 2B — Embedded Architecture"
+                        paragraph
+                          text "与 Provisioning V2 并行。"
+                        paragraph
+                          text "主要改："
+                        text "src/session/* src/rdp/* native/freerdp/* src/platform/macos/* src/ipc/session.rs"
+                        paragraph
+                          text "第一目标不是改 FreeRDP。"
+                        paragraph
+                          text "而是："
+                        text "FakeRdpAdapter"
+                        paragraph
+                          text "能把所有 session tests 跑通。"
+                        heading
+                          text "Phase 2C — Device Trust"
+                        paragraph
+                          text "也可以并行。"
+                        paragraph
+                          text "它基本是纯逻辑。"
+                        paragraph
+                          text "甚至可以非常早完成。"
+                        paragraph
+                          text "主要："
+                        text "src/trust/*"
+                        paragraph
+                          text "然后再接入现有："
+                        text "SSH connect pipeline device history Keychain"
+                        heading
+                          text "Phase 3 — Updater Rollback"
+                        paragraph
+                          text "我会稍微晚于前三块。"
+                        paragraph
+                          text "原因不是技术依赖。"
+                        paragraph
+                          text "而是 updater 的 filesystem fault testing 需要已经有："
+                        text "FaultInjector Test filesystem EventRecorder"
+                        paragraph
+                          text "因此 Harness 稳定之后做更舒服。"
+                        heading
+                          text "9. 如果你有多个 Agent，可以这样分"
+                        heading
+                          text "Agent A — Reliability Core"
+                        paragraph
+                          text "负责："
+                        text "jr-test-support ErrorCode EventRecorder FaultInjector ScenarioRunner CI scripts"
+                        paragraph
+                          text "尽量不动业务代码。"
+                        heading
+                          text "Agent B — Provisioning"
+                        paragraph
+                          text "负责："
+                        text "bootstrap compatibility shim JSONL protocol step runner Ubuntu tests"
+                        heading
+                          text "Agent C — Session"
+                        paragraph
+                          text "负责："
+                        text "RdpSessionManager RdpEngine FakeRdpAdapter FreeRDP bridge boundary NativeSurfaceHost"
+                        heading
+                          text "Agent D — Trust + Updater"
+                        paragraph
+                          text "先："
+                        text "DeviceTrust"
+                        paragraph
+                          text "再："
+                        text "Updater transaction rollback"
+                        paragraph
+                          text "因为两者都偏："
+                        text "state machine persistent state recovery"
+                        heading
+                          text "10. 推荐合并顺序"
+                        paragraph
+                          text "即使并行开发，也不要随机 merge。"
+                        paragraph
+                          text "推荐："
+                        text "1. test-support / common contracts 2. Device Trust pure core 3. Provisioning V2 protocol 4. SessionManager + Fake Adapter 5. Real FreeRDP adapter migration 6. Updater transaction core 7. Updater fault..."
+                        paragraph
+                          text "为什么 Trust 可以这么早？"
+                        paragraph
+                          text "因为它："
+                        text "代码面小 依赖少 风险相对低"
+                        paragraph
+                          text "可以快速建立“纯函数决策 + table-driven tests”的范式。"
+                        heading
+                          text "11. 每个阶段都执行的 Gate"
+                        paragraph
+                          text "禁止："
+                        text "“功能写完后统一补测试”"
+                        paragraph
+                          text "而是每个模块都要求："
+                        text "Contract ↓ Fake ↓ Implementation ↓ Fault ↓ Regression"
+                        paragraph
+                          text "例如 Provisioning："
+                        text "JSONL schema tests ↓ fake events ↓ real shell runner ↓ kill halfway ↓ rerun"
+                        paragraph
+                          text "Session："
+                        text "RdpEngine contract ↓ FakeRdpAdapter ↓ SessionManager ↓ disconnect fault ↓ FreeRDP implementation"
+                        paragraph
+                          text "Updater："
+                        text "transaction state machine ↓ fake filesystem ↓ sandbox install ↓ process kill ↓ recovery"
+                        heading
+                          text "12. 建议增加统一 Reliability 命令"
+                        paragraph
+                          text "最终开发者不应该记："
+                        text "12 条命令"
+                        paragraph
+                          text "增加："
+                        text "pnpm reliability"
+                        paragraph
+                          text "内部执行："
+                        text "frontend unit rust unit connection scenario trust matrix provision contract updater faults"
+                        paragraph
+                          text "Linux VM 部分可："
+                        text "pnpm reliability:linux"
+                        paragraph
+                          text "最终："
+                        text "pnpm reliability:full"
+                        heading
+                          text "13. 本阶段 Release Gate"
+                        paragraph
+                          text "没有 Jetson 真机期间，我建议 v0.4 的工程 Gate 定义成："
+                        text "Rust unit tests PASS Frontend unit tests PASS Connection scenario tests PASS Multi-session isolation PASS Diagnostics redaction PASS Provision JSONL contract PASS Provision idempotency PASS Provision ..."
+                        paragraph
+                          text "然后明确标记："
+                        text "PENDING REAL-HARDWARE GATES JetPack 5 real-device JetPack 6 real-device JetPack 7 real-device power-cycle long session real clipboard real IME multi-Jetson"
+                        paragraph
+                          text "这样工程事实非常清楚。"
+                        heading
+                          text "14. 真机回来以后，只补这一层"
+                        paragraph
+                          text "这阶段做好以后，未来有真机不要重新“全面测试”。"
+                        paragraph
+                          text "直接把同一套 Harness 接上真实设备："
+                        text "JR_TARGET=jp5-a pnpm reliability:hardware"
+                        text "JR_TARGET=jp6-a pnpm reliability:hardware"
+                        text "JR_TARGET=jp7-a pnpm reliability:hardware"
+                        paragraph
+                          text "Hardware adapter 只替换："
+                        text "FakeSsh FakePower FakeRdp"
+                        paragraph
+                          text "为："
+                        text "RealSsh SmartPlug / manual power RealFreeRDP"
+                        paragraph
+                          text "上层 Scenario 不需要重写。"
+                        paragraph
+                          text "例如今天写："
+                        text "scenario_reboot_then_reconnect()"
+                        paragraph
+                          text "现在："
+                        text "Fake reboot"
+                        paragraph
+                          text "以后："
+                        text "真实 Jetson reboot"
+                        paragraph
+                          text "Scenario 本身保持一致。"
+                        paragraph
+                          text "这才是 Reliability Harness 最大的长期收益。"
+                        heading
+                          text "15. TOP1–4 最终“完成即停”标准"
+                        heading
+                          text "TOP1 Reliability Harness"
+                        paragraph
+                          text "停在："
+                        text "确定性状态机和 failure scenario 都可以自动跑"
+                        paragraph
+                          text "不追求硬件覆盖率。"
+                        heading
+                          text "TOP2 Provisioning V2"
+                        paragraph
+                          text "停在："
+                        text "JSONL step-based idempotent resumable legacy-compatible"
+                        paragraph
+                          text "不要重写成 Rust Agent。"
+                        heading
+                          text "TOP3 Embedded Architecture"
+                        paragraph
+                          text "停在："
+                        text "SessionManager 接管 lifecycle Bridge 退化成 FreeRDP adapter Fake adapter 测试完整"
+                        paragraph
+                          text "不要优化视频性能。"
+                        heading
+                          text "TOP4 Updater + Trust"
+                        paragraph
+                          text "停在："
+                        text "任何本地 update interruption 都能恢复 known-good 任何 identity mismatch 都不会静默信任"
+                        paragraph
+                          text "不要增加复杂 update backend。"
+                        heading
+                          text "16. 我认为最关键的一个架构原则"
+                        paragraph
+                          text "这轮重构时建议在"
+                          text "AGENTS.md"
+                          text "/ 架构文档直接写成硬规则："
+                        paragraph
+                          text "任何外部系统都必须通过 Adapter 接入核心状态机。"
+                        paragraph
+                          text "也就是："
+                        text "SSH → SshAdapter Tunnel → TunnelAdapter Provision → ProvisionAdapter RDP → RdpEngine Keychain → SecretStore UpdaterFS → UpdateFilesystem Clock → Clock"
+                        paragraph
+                          text "核心 orchestration："
+                        text "永远不直接调用： process::Command FreeRDP C API NSView Keychain API filesystem rename system clock"
+                        paragraph
+                          text "这样才能做到："
+                        text "Production Adapter ↕ Fake Adapter"
+                        paragraph
+                          text "一键替换。"
+                        paragraph
+                          text "如果这一条真正落下来，即使现在没有任何 Jetson 真机，你也可以把整个产品的大部分可靠性问题变成"
+                          text "普通的确定性软件测试问题"
+                          text "。"
+                        paragraph
+                          text "这就是我认为 v0.4 Reliability Release 最值得留下的工程资产。"
+                    paragraph
+                      text "如果让我进一步压缩成一个可直接给 Codex/Pi 执行的顺序，我会让它"
+                      text "先只完成"
+                      text "jr-test-support + Connection Scenario Harness + ErrorCode/AttemptId"
+                      text "，并设置硬 Gate 禁止碰 Provisioning/FreeRDP/Updater 业务实现"
+                      text "；这个底座合并后，再让 3 个 Agent 分别跑 Provisioning、Session、Trust/Updater。这样最不容易出现“4 个 Agent 同时重构四套不同抽象”的情况。"
+                button "复制回复" [ref=6365, loc=ambiguous]
+                  svg_root
+                button "评价回复" [ref=6367, loc=ambiguous]
+                  svg_root
+                button "分享" [ref=6369, loc=ambiguous]
+                  svg_root
+                button "切换模型" [ref=6371, loc=ambiguous]
+                  svg_root
+                button "更多操作" [ref=6373, loc=ambiguous]
+                  svg_root
+          text "ChatGPT 也可能会犯错。请核查重要信息。"
+        container
+          button [ref=597, loc=unstable]
+            svg_root
+            container
+              container
+              container
+              container
+          container
+            form
+              button "添加文件等" [ref=490, loc=css:button[aria-label="添加文件等"]]
+                container
+                svg_root
+              textfield "与 ChatGPT 聊天" [ref=158, loc=css:input[aria-label="与 ChatGPT 聊天"]]
+                paragraph
+                  text "问问 ChatGPT"
+              container
+                button [ref=494, loc=unstable]
+                  container
+                  text "高"
+                  svg_root
+                  container
+                container
+                  button "开始听写" [ref=498, loc=css:button[aria-label="开始听写"]]
+                    container
+                    svg_root
+                    container
+                  button "启动语音功能" [ref=6377, loc=css:button[aria-label="启动语音功能"]]
+                    svg_root
+                    container
+            textbox [ref=619, loc=unstable]
+              button [ref=620, loc=unstable]
+                text "选择文件"
+              text "未选择任何文件"
+            textbox [ref=623, loc=css:input[name="upload-media"]]
+              button [ref=624, loc=unstable]
+                text "选择文件"
+              text "未选择任何文件"
+            textbox [ref=627, loc=unstable]
+              button [ref=628, loc=unstable]
+                text "选择文件"
+              text "未选择任何文件"
+      container

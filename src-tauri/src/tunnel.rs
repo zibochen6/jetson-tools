@@ -314,16 +314,16 @@ impl TunnelManager {
         }
 
         eprintln!("[jr-flow] tunnel ensure result=spawning key={key} host={host} user={username}");
-        let tunnel =
-            spawn_tunnel_with_retry(app, host, remote_ssh_port, username, password).map_err(|e| {
-            // Every spawn failure lands here (pre-loop setup errors AND
-            // loop exits) — the log is the only post-mortem surface.
-            eprintln!(
-                "[jr-flow] tunnel ensure result=failed code={}: {e}",
-                e.code()
-            );
-            e
-        })?;
+        let tunnel = spawn_tunnel_with_retry(app, host, remote_ssh_port, username, password)
+            .map_err(|e| {
+                // Every spawn failure lands here (pre-loop setup errors AND
+                // loop exits) — the log is the only post-mortem surface.
+                eprintln!(
+                    "[jr-flow] tunnel ensure result=failed code={}: {e}",
+                    e.code()
+                );
+                e
+            })?;
         let endpoints = tunnel.endpoints.clone();
         guard.active.insert(key, tunnel);
         Ok(endpoints)
@@ -889,7 +889,9 @@ mod tests {
         assert!(!is_retryable_tunnel_error(&TunnelError::SshExited(
             "ssh exited 255".into()
         )));
-        assert!(!is_retryable_tunnel_error(&TunnelError::ExternalSingleDevice));
+        assert!(!is_retryable_tunnel_error(
+            &TunnelError::ExternalSingleDevice
+        ));
         assert!(!is_retryable_tunnel_error(&TunnelError::Setup(
             "spawn".into()
         )));

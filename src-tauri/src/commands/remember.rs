@@ -130,15 +130,12 @@ pub fn remember_device(
     let account = match &device_id {
         Some(id) => format!("{}@{}", input.username, id),
         None => {
-            let host = paths
-                .first()
-                .map(|p| p.address.clone())
-                .ok_or_else(|| {
-                    ProbeError::new(
-                        ProbeErrorCode::Unknown,
-                        "remember_device needs a device id or at least one address",
-                    )
-                })?;
+            let host = paths.first().map(|p| p.address.clone()).ok_or_else(|| {
+                ProbeError::new(
+                    ProbeErrorCode::Unknown,
+                    "remember_device needs a device id or at least one address",
+                )
+            })?;
             format!("{}@{}", input.username, host)
         }
     };
@@ -163,7 +160,11 @@ pub fn remember_device(
             .delete(remember::SECRET_SERVICE, &legacy.account())
             .map_err(ProbeError::from)?;
         store
-            .remove(None, legacy.paths.first().map(|p| p.address.as_str()), &input.username)
+            .remove(
+                None,
+                legacy.paths.first().map(|p| p.address.as_str()),
+                &input.username,
+            )
             .map_err(ProbeError::from)?;
     }
 
@@ -205,7 +206,10 @@ pub fn forget_remembered_device(
 
     // Collect every secret account this forget must remove: the v3 account
     // plus legacy duplicates sharing the named host.
-    let device_id = device_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    let device_id = device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     let host = host.as_deref().map(str::trim).filter(|h| !h.is_empty());
 
     let mut accounts: Vec<String> = Vec::new();

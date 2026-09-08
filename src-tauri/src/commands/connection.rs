@@ -202,8 +202,8 @@ pub async fn probe_device(
 
     // 2. Dial the ephemeral wire endpoint but scope TOFU to the real Jetson.
     eprintln!("[jr-flow] probe connecting...");
-    let mut session =
-        match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await? {
+    let mut session = match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await?
+    {
         ssh::SshConnectOutcome::Connected(s) => s,
         ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(ProbeResult::HostKeyUnknown { key });
@@ -506,8 +506,8 @@ pub async fn prepare_remote_desktop(
             .map_err(|e| ProbeError::new(ProbeErrorCode::Unknown, format!("save trust: {e}")))?;
     }
 
-    let mut session =
-        match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await? {
+    let mut session = match connect_via_tunnel(&tunnels, &input, &wire, &mut store, &config).await?
+    {
         ssh::SshConnectOutcome::Connected(s) => s,
         ssh::SshConnectOutcome::HostKeyUnknown(key) => {
             return Ok(PrepareResult::HostKeyUnknown { key });

@@ -105,9 +105,7 @@ mod tests {
     async fn probe_one_measures_connect_rtt() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            while let Ok(_) = listener.accept().await {}
-        });
+        tokio::spawn(async move { while let Ok(_) = listener.accept().await {} });
         let entry = probe_addr("127.0.0.1".into(), port).await;
         assert!(entry.reachable);
         assert!(entry.rtt_ms.unwrap() < 1000);

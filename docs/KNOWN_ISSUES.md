@@ -333,3 +333,26 @@
   - 只要 App 还运行时链接 Homebrew FreeRDP（`libfreerdp-client3.3.dylib`），`hardenedRuntime` 必须保持 `false`。
   - **三问速判**：终端 ssh 同 IP 通？App 连 Tailscale(100.x) 通？`codesign -dv` 无 Team ID？三连全中 = 本条目（本地网络 TCC + 无签名身份），别再当网络/路由问题修。
 - **状态**：✅ 已修复并真机验证（2026-09-08，192.168.2.20 直连桌面正常）。
+
+## KI-040 — 多会话剪贴板失效：后台会话 CLIPRDR 从不接线/宣告（已随 0.3.9 发布，真机回归待用户）
+
+- **症状（用户报告）**：同时开两个远程桌面时，只有一个支持复制粘贴，另一个完全不通。
+- **根因（两层）**：
+  1. `jr_clip_monitor_ready` 只在 `s->clip_text` 非空时宣告 ClientFormatList，而初始快照仅由 `jr_clipboard_sync_start`（**只对聚焦会话调用**）存储 → 后台启动的会话永远不宣告，xrdp 认为该会话没有剪贴板通道，粘贴永远无效。
+  2. 宣告的懒重试由 0.5s 焦点轮询 timer 触发（KI-019 路径），后台会话无 timer → 无任何重试接线途径；切 Tab 后 timer 只在 pasteboard 再次变化时才入队，刚切换即粘贴必失败。
+- **修复（2026-09-08）**：
+  - `bridge.c jr_clip_monitor_ready`：无条件 `jr_clip_announce`（接线+宣告与焦点解耦，每会话 worker 自行完成握手）。
+  - `macos_view.m jr_clipboard_sync_start`：快照存储后额外 `jr_session_enqueue_local_clipboard_text` 入队一次，Tab 切换即宣告，无需等 pasteboard 变化。
+  - 产品语义保持不变（KI-022）：剪贴板跟焦点会话；远端→Mac 仅焦点可写（generation guard 照旧）。
+- **状态**：✅ 已随 0.3.9 发布（2026-09-08）；真机双桌面剪贴板回归 PENDING（验收：`grep '\[jr-clip\]' ~/Library/Logs/jetson-remote.log` 两个 session 地址都有 format-list sent；两桌面切换后粘贴均生效）。
+
+## KI-041 — 卡死桌面关闭后重连永久转圈：shutdown join 无界阻塞整个启动链（已随 0.3.9 发布，真机回归待用户）
+
+- **症状（用户报告）**：运行一段时间后一个桌面卡死（画面不动）；关掉该 Tab 后重新连接，永远停留在「连接中」转圈，再也连不上。
+- **根因**：卡死的 FreeRDP worker 线程不退出（可挂在 `freerdp_client_start`，xrdp 半死时握手无响应）；`RdpSession::shutdown` 的 `worker.join()` **无界阻塞**；`launch_session` 命令开头 `is_running_keyed → close_keyed → shutdown()` 卡死 → Tauri IPC 永不返回；前端 `relaunch` 的 `await gateway.launch` 永不 resolve，而 KI-036 的 8 次重连链只在 launch **reject** 时才触发→ tab 停在 launching 转圈。
+- **修复（2026-09-08）**：
+  - `session.rs shutdown`：`join_with_deadline`（4s，50ms 轮询）；超时放弃回收（泄漏 worker+C ctx，日志 `[jr-flow] rdp worker join timeout`），保证 close/launch 有界。
+  - `bridge.c jr_session_disconnect`：置位后续发 `SetEvent(s->cmd_wake)` 立即唤醒事件循环。
+  - `bridge.c jr_session_connect`：`FreeRDP_TcpConnectTimeout=10000`，冻结的 connect 阶段有上界。
+  - 前端 `sessionsStore.relaunch`：`withHardTimeout` 120s 硬天花（合法最坏 ≈75s），超时按 `rdp_failed` 落 error 可点击重试，即使用户遇到新的后端卡死也不再「永久转圈」。
+- **状态**：✅ 已随 0.3.9 发布（2026-09-08）；真机卡死场景回归 PENDING。设备侧卡死根因（KI-015 xfwm4 段错误嫌疑或他因）待真机日志另开子任务诊断。

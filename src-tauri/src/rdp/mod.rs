@@ -11,6 +11,7 @@ pub mod args;
 pub mod client;
 pub mod error;
 pub mod ffi;
+pub mod free_adapter;
 pub mod freerdp;
 pub mod manager;
 pub mod native_view;

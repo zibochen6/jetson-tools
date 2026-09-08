@@ -694,6 +694,10 @@ int jr_session_connect(jr_session_t* s)
 	freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32)s->width);
 	freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32)s->height);
 	freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, (UINT32)s->color_depth);
+	/* The connect phase must be bounded: a wedged xrdp (half-dead session)
+	 * that accepts TCP but never answers the X.224 handshake would otherwise
+	 * stall `freerdp_client_start` indefinitely (stuck-session bug). */
+	freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout, 10000);
 
 	if (freerdp_client_start(s->context) < 0)
 	{
@@ -716,6 +720,11 @@ int jr_session_disconnect(jr_session_t* s)
 	s->disconnecting = 1;
 	if (s->context)
 		freerdp_abort_connect_context(s->context);
+	/* Wake the event loop immediately so it observes `disconnecting`
+	 * (bug: a parked loop otherwise waits out its 33ms tick; harmless, but
+	 * the exit path should not depend on tick timing). */
+	if (s->cmd_wake)
+		SetEvent(s->cmd_wake);
 	return 0;
 }
 
@@ -1136,11 +1145,15 @@ static UINT jr_clip_monitor_ready(CliprdrClientContext* ctx, const CLIPRDR_MONIT
 		return 0;
 	fprintf(stderr, "[jr-clip][session=%p] monitor-ready\n", (void*)s);
 	s->clip_ready = 1;
-	/* Offer the session-owned snapshot if the initial Mac sync already stored
-	 * one (jr_clipboard_sync_start stores it thread-safely on the main thread
-	 * before the worker connects). No NSPasteboard access here. */
-	if (s->clip_text)
-		jr_clip_announce(s);
+	/* Announce unconditionally (multi-session clipboard bug): the client
+	 * capabilities / format list must reach the server for EVERY session,
+	 * including one launched in the background — a background session never
+	 * saw jr_clipboard_sync_start, so its initial snapshot may be NULL, but
+	 * the channel still needs wiring + ClientFormatList or xrdp treats this
+	 * session as clipboard-less and pasting into it never works.
+	 * jr_clip_announce lazily ensures the cliprdr interface (KI-019 safety
+	 * net) and no-ops until clip_ready, which is set above. */
+	jr_clip_announce(s);
 	return 0;
 }
 

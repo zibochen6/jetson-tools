@@ -101,6 +101,36 @@ const RECONNECT_SLOW_DELAY_MS = 10000;
  * reconnect chain alive instead of dead-ending the tab. */
 const UNREACHABLE_CODES = new Set(["rdp_connection_failed", "tunnel_failed"]);
 
+/** Hard ceiling for a launch IPC round-trip. The backend's legitimate worst
+ * case is ~75s (18s first-frame wait + SSH-triggered xrdp repair + 2s +
+ * 25s repaired wait); anything past 120s means the IPC is wedged (stuck
+ * session holding the manager) and the tab must land on a retryable error
+ * instead of spinning forever (卡死会话重连永久转圈 bug). */
+const LAUNCH_IPC_TIMEOUT_MS = 120_000;
+
+/** Promise ceiling: reject with `makeError()` when the promise neither
+ * resolves nor rejects within `ms`. The underlying promise keeps running
+ * (it cannot be aborted), the caller just stops waiting. */
+function withHardTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  makeError: () => Error,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(makeError()), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export function createSessionsStore(injected?: SessionDesktopGateway) {
   const gateway: SessionDesktopGateway =
     injected ?? new TauriSessionService();
@@ -126,15 +156,23 @@ export function createSessionsStore(injected?: SessionDesktopGateway) {
       if (!force && session.phase === "running") return;
       patch(id, { phase: "launching" });
       try {
-        await gateway.launch(
-          id,
-          {
-            host: session.host,
-            username: session.username,
-            password: session.password,
-            deviceId: session.deviceId,
-          },
-          { focusOnLaunch },
+        await withHardTimeout(
+          gateway.launch(
+            id,
+            {
+              host: session.host,
+              username: session.username,
+              password: session.password,
+              deviceId: session.deviceId,
+            },
+            { focusOnLaunch },
+          ),
+          LAUNCH_IPC_TIMEOUT_MS,
+          () =>
+            new ConnectionFailure(
+              "rdp_failed",
+              `launch IPC did not resolve within ${LAUNCH_IPC_TIMEOUT_MS}ms`,
+            ),
         );
         patch(id, { phase: "running", retries: 0, retryPending: false });
         if (focusOnLaunch) {

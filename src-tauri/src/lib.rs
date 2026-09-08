@@ -1,13 +1,24 @@
 pub mod bootstrap;
 mod commands;
 pub mod device;
+/// Stable error codes shared with the frontend (Reliability Harness).
+pub mod error_code;
+/// Stable ID newtypes: SessionId / AttemptId / RunId / TransactionId.
+pub mod ids;
 pub mod net;
 pub mod rdp;
 pub mod remember;
+/// Frozen RDP session contract layer (r2 §4): RdpEngine trait + SessionManager.
+pub mod session;
 pub mod ssh;
+/// Shared test primitives (FakeClock / EventRecorder / FaultInjector) for
+/// reliability scenario tests. Production code must never depend on this
+/// module for behavior; the fault injector is release-neutral by design.
+pub mod test_support;
 pub mod trust;
 pub mod tunnel;
 pub mod updater;
+pub mod updater_engine;
 
 #[cfg(test)]
 mod queue_ffi_tests;

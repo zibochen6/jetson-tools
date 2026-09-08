@@ -1,7 +1,7 @@
 {
   "name": "jetson-remote",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.3.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "reliability": "bash scripts/test/all.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

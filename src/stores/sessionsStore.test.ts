@@ -17,6 +17,8 @@ interface FakeGateway extends SessionDesktopGateway {
   statuses: Map<string, RdpStatus>;
   /** When set, every launch rejects with this typed code (KI-036 tests). */
   launchFailureCode: ConnectionErrorCode | null;
+  /** When set, every launch returns a never-resolving promise. */
+  hangLaunch: boolean;
 }
 
 function fakeGateway(): FakeGateway {
@@ -24,9 +26,11 @@ function fakeGateway(): FakeGateway {
     calls: [],
     statuses: new Map(),
     launchFailureCode: null,
+    hangLaunch: false,
     async launch(sessionId, _input, options): Promise<RdpLaunchResult> {
       gw.calls.push(`launch:${sessionId}:${options.focusOnLaunch}`);
       if (gw.launchFailureCode) throw new ConnectionFailure(gw.launchFailureCode);
+      if (gw.hangLaunch) return new Promise<RdpLaunchResult>(() => {});
       gw.statuses.set(sessionId, { kind: "running" });
       return { kind: "opened" };
     },
@@ -104,6 +108,34 @@ describe("sessionsStore (multi-device, V0.4)", () => {
     expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe("running");
     expect(store.getState().activeId).toBe("seeed@192.168.1.31");
     expect(gw.calls).toContain("launch:seeed@192.168.1.31:true");
+  });
+
+  it("a wedged launch IPC lands on error instead of spinning forever (stuck-session bug)", async () => {
+    vi.useFakeTimers();
+    try {
+      const gw = fakeGateway();
+      const store = createSessionsStore(gw);
+      store.getState().register(A, null);
+      gw.statuses.set("seeed@192.168.1.31", { kind: "notRunning" });
+      await vi.advanceTimersByTimeAsync(0);
+      await store.getState().pollStatuses();
+      expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe("ready");
+
+      // The backend never answers (wedged manager held by a stuck session).
+      gw.hangLaunch = true;
+      store.getState().focusTab("seeed@192.168.1.31");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(store.getState().sessions["seeed@192.168.1.31"].phase).toBe("launching");
+
+      // 121s later the hard ceiling converts the infinite launch into a
+      // retryable error — the tab must NOT stay on "launching" forever.
+      await vi.advanceTimersByTimeAsync(121_000);
+      const s = store.getState().sessions["seeed@192.168.1.31"];
+      expect(s.phase).toBe("error");
+      expect(s.retryPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("showOverview hides every native view but keeps sessions alive", () => {

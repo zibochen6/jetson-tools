@@ -29,10 +29,13 @@ export type ConnectionErrorCode =
   | "ssh_timeout"
   | "auth_failed"
   | "not_jetson"
+  | "ssh_host_key_changed"
+  | "device_unreachable"
   | "provision_failed"
   | "rdp_failed"
   | "rdp_client_missing"
   | "rdp_connection_failed"
+  | "rdp_engine_crashed"
   | "detection_failed"
   | "sudo_required"
   | "verification_failed"
@@ -240,6 +243,23 @@ const ERROR_COPY: Record<ConnectionErrorCode, ConnectionError> = {
     title: "This device doesn't appear to be an NVIDIA Jetson.",
     suggestions: [],
   },
+  ssh_host_key_changed: {
+    code: "ssh_host_key_changed",
+    title: "Device identity changed",
+    suggestions: [
+      "The security identity of this address no longer matches the saved record — it is NOT safe to auto-connect.",
+      "Verify this is still your Jetson, then confirm the new identity.",
+    ],
+  },
+  device_unreachable: {
+    code: "device_unreachable",
+    title: "Couldn't reach this Jetson",
+    suggestions: [
+      "The Jetson is powered on",
+      "Both devices are on the same network",
+      "The IP address is correct",
+    ],
+  },
   provision_failed: {
     code: "provision_failed",
     title: "Couldn't prepare the remote desktop.",
@@ -269,6 +289,11 @@ const ERROR_COPY: Record<ConnectionErrorCode, ConnectionError> = {
       "If macOS shows a Local Network permission prompt, click Allow — the app will retry automatically.",
       "Otherwise check the Jetson is powered on and reachable, then retry.",
     ],
+  },
+  rdp_engine_crashed: {
+    code: "rdp_engine_crashed",
+    title: "The desktop engine stopped unexpectedly.",
+    suggestions: ["Reconnect to open a fresh desktop session."],
   },
   detection_failed: {
     code: "detection_failed",
@@ -314,4 +339,12 @@ export function describeError(
 ): ConnectionError {
   const base = ERROR_COPY[code] ?? ERROR_COPY.unknown;
   return detail ? { ...base, detail } : base;
+}
+
+/** One connection-attempt trace entry (Reliability Harness). */
+export interface ConnectionTraceEntry {
+  attemptId: number;
+  state: ConnectionState;
+  /** Wall-clock stamp (ms) — ordering only, never used for timing logic. */
+  t: number;
 }

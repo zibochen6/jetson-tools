@@ -28,16 +28,16 @@ pub fn default_port() -> u16 {
 
 // Secret-safe Debug: never prints the password.
 impl fmt::Debug for SshConnectionInput {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("SshConnectionInput")
-                .field("host", &self.host)
-                .field("port", &self.port)
-                .field("device_id", &self.device_id)
-                .field("username", &self.username)
-                .field("password", &"<redacted>")
-                .finish()
-        }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SshConnectionInput")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("device_id", &self.device_id)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
     }
+}
 
 #[derive(Clone, Debug)]
 pub struct SshConfig {

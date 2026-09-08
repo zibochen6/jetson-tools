@@ -77,6 +77,8 @@ xrdp 对 `TS_POINTER_EVENT` 的解析（v0.9.17 `xrdp/xrdp_wm.c::xrdp_wm_process
 - **RDPGFX 接线**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 是黑屏根因（KI-013）——通道接线逻辑动它前必须理解。
 - **杀会话用锚定模式**：`pkill -f "^/usr/lib/xorg/Xorg :10"`；裸 `pkill -f "Xorg :10"` 会匹配自身 ssh 命令行自杀。
 - **修饰键状态同步（KI-023）**：Cmd（→Super，0x5B/0x5C, E0）的 `flagsChanged` 松开事件可能被 macOS 系统快捷键路径吞掉（Cmd+Tab 切应用、Cmd+Q 退出、Cmd+空格 Spotlight），远端 Xorg 会永远认为 Super 按住；xrdp 常驻 X 会话跨重连保留卡键态，于是「一连上就复现」：**e → 打开 Thunar（Super+E）、空格 → 被输入法切换快捷键吃掉**。改 `macos_view.m` 的 `flagsChanged`/焦点处理或 `bridge.c` 的键盘发送前必读本条目：连接建立（PostConnect）、输入 attach（含 Tab refocus）、窗口/应用焦点变化必须调用 `jr_session_reset_keyboard_modifiers`（释放全部修饰键，幂等），且不得在焦点恢复时反向补发「仍按住」的修饰键（AppKit 无 L/R 区分，补发可能制造新的卡键）。
+- **CLIPRDR 接线/宣告与焦点解耦（KI-040，2026-09-08）**：剪贴板通道握手每個会话独立完成——`jr_clip_monitor_ready` 必须无条件 `jr_clip_announce`（含 ClientFormatList），后台启动的会话也不例外；`jr_clipboard_sync_start`（焦点迁移）在存储快照后必须**入队一次**宣告，保证切 Tab 后立即可粘贴。焦点只决定「谁有权读写 Mac 剪贴板」（generation guard，KI-028），不得主宰会话的剪贴板通道能否建立。
+- **teardown/join 必须有上界（KI-041，2026-09-08）**：任何线程 `join()` 都不许无界等另一个线程自查退出——FreeRDP worker 可能挂在半死的 xrdp 上永不退出，无界 join 会把 `close_keyed`/`launch_entry` 整条链卡死，前端表现为「关掉卡死桌面后重连永久转圈」。`RdpSession::shutdown` 用 `join_with_deadline`（4s 超时放弃回收）；同时 `jr_session_connect` 设 10s TCP 连接超时、`jr_session_disconnect` 显式 `SetEvent(cmd_wake)`。
 
 ---
 
@@ -162,6 +164,7 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 - [ ] 前后台 Tab 连续切换 10 次不出现新的 tunnel spawn / rdp session launch，后台连接保持存活。
 - [ ] 当前 Tab 独占鼠标、键盘和剪贴板；后台设备自动重连不得切走前台 Tab。
 - [ ] 关闭或重连其中一台后，另一台的画面、输入、剪贴板和 tunnel health 均不受影响。
+- [ ] 僵死会话重连有界（KI-041）：关闭卡死桌面后重连不会永久转圈；最坏收敛到可重试 error（不能停在 launching）。
 - [ ] app 退出后所有匹配 `tunnel/known_hosts` 的 SSH 进程组均被回收，`tunnel/session-*` 凭据目录无遗留。
 
 ---
@@ -238,4 +241,4 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 
 - 改 `flagsChanged` 或新增 reset 调用点时，先跑设备侧地面真值：`DISPLAY=:10.0 xinput query-state <键盘设备id>` 空闲时 `down:` 列表不应有 Super_L(133)；有即卡键。
 
-*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量；2026-09-08 增补 KI-039（本地网络 TCC 拦截链路 / 正式签名落地）与 §2.4 隧道签名警示。*
+*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量；2026-09-08 增补 KI-039（本地网络 TCC 拦截链路 / 正式签名落地）与 §2.4 隧道签名警示；同日增补 KI-040（剪贴板接线/宣告与焦点解耦）与 KI-041（teardown join 上界），对应新增 §2.4 两条硬规则。*

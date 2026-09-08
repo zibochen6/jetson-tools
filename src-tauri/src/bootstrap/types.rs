@@ -94,8 +94,7 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
     }
     if !facts.lo_ipv6_loopback {
         issues.push(
-            "IPv6 loopback (::1) is missing on lo — xrdp cannot reach sesman (KI-038)"
-                .into(),
+            "IPv6 loopback (::1) is missing on lo — xrdp cannot reach sesman (KI-038)".into(),
         );
     }
 

@@ -11,9 +11,18 @@
 #
 # 用法：
 #   本机免密 sudo：        ./bootstrap.sh
+#   Provisioning V2 协议： ./bootstrap.sh --protocol jsonl --run-id <id>
+#      （分流到 provision/runner.sh；stdout 只出 JSONL 事件流，见 .trellis/tasks/09-08-provisioning-v2）
 #   远程（sudo 密码经 ssh stdin 喂入，脚本经文件执行）：
 #       scp bootstrap.sh user@jetson:/tmp/jr-bootstrap.sh
 #       printf '%s\n' "$SUDO_PASS" | ssh user@jetson 'bash /tmp/jr-bootstrap.sh'
+
+# ── Provisioning V2 分流（legacy 逻辑零改动；协议模式走 provision/runner.sh） ──
+if [ "${1:-}" = "--protocol" ] && [ "${2:-}" = "jsonl" ]; then
+  shift 2
+  RUNNER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/provision/runner.sh"
+  exec bash "$RUNNER" "$@"
+fi
 
 set -uo pipefail
 

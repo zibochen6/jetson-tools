@@ -306,8 +306,7 @@ impl RememberedDeviceStore {
             .entries_mru()
             .into_iter()
             .filter(|e| {
-                !e
-                    .device_id
+                !e.device_id
                     .as_deref()
                     .is_some_and(|id| device.device_id.as_deref() == Some(id))
                     && !(!e.device_id.is_some()
@@ -366,11 +365,7 @@ impl RememberedDeviceStore {
     /// Legacy-v2 entries for the same username that share an address with
     /// `hosts` — the candidates whose secrets must be migrated into the v3
     /// `user@deviceId` account and then deleted (merge on first connect).
-    pub fn legacy_merge_candidates(
-        &self,
-        username: &str,
-        hosts: &[&str],
-    ) -> Vec<RememberedDevice> {
+    pub fn legacy_merge_candidates(&self, username: &str, hosts: &[&str]) -> Vec<RememberedDevice> {
         self.load_all()
             .into_iter()
             .filter(|d| d.is_legacy() && d.same_device(None, username, hosts))
@@ -392,7 +387,10 @@ impl DeviceEntry {
     fn same_device_legacy(&self, username: &str, hosts: &[&str]) -> bool {
         self.device_id.is_none()
             && self.username == username
-            && self.paths.iter().any(|p| hosts.contains(&p.address.as_str()))
+            && self
+                .paths
+                .iter()
+                .any(|p| hosts.contains(&p.address.as_str()))
     }
 }
 
@@ -594,10 +592,10 @@ mod tests {
         }
 
         fn set(&self, service: &str, account: &str, secret: &str) -> Result<(), RememberError> {
-            self.0
-                .lock()
-                .unwrap()
-                .insert((service.to_string(), account.to_string()), secret.to_string());
+            self.0.lock().unwrap().insert(
+                (service.to_string(), account.to_string()),
+                secret.to_string(),
+            );
             Ok(())
         }
 
@@ -699,13 +697,13 @@ mod tests {
         let store = RememberedDeviceStore::new(dir);
         assert_eq!(
             store.load_all(),
-            vec![dev_legacy("10.0.0.7", "alice"), dev_legacy(DEV_HOST, DEV_USER)]
+            vec![
+                dev_legacy("10.0.0.7", "alice"),
+                dev_legacy(DEV_HOST, DEV_USER)
+            ]
         );
         // Legacy account stays user@host so the old secret resolves.
-        assert_eq!(
-            store.load_all()[1].account(),
-            "seeed@192.168.100.164"
-        );
+        assert_eq!(store.load_all()[1].account(), "seeed@192.168.100.164");
     }
 
     #[test]
@@ -722,12 +720,17 @@ mod tests {
         assert_eq!(store.load_all(), vec![dev_legacy(DEV_HOST, DEV_USER)]);
 
         // The next write rewrites the file in v3 shape.
-        store.upsert(&dev_v3("id-x", "alice", "X", &["10.0.0.5"])).unwrap();
+        store
+            .upsert(&dev_v3("id-x", "alice", "X", &["10.0.0.5"]))
+            .unwrap();
         let raw = fs::read_to_string(store.file.clone()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(value["version"], 3);
         assert_eq!(value["devices"].as_array().unwrap().len(), 2);
-        assert_eq!(store.load(), Some(dev_v3("id-x", "alice", "X", &["10.0.0.5"])));
+        assert_eq!(
+            store.load(),
+            Some(dev_v3("id-x", "alice", "X", &["10.0.0.5"]))
+        );
     }
 
     #[test]
@@ -743,12 +746,19 @@ mod tests {
     #[test]
     fn remove_deletes_only_the_named_device() {
         let store = temp_store();
-        store.upsert(&dev_v3("id-a", "a", "A", &["10.0.0.1"])).unwrap();
-        store.upsert(&dev_v3("id-b", "b", "B", &["10.0.0.2"])).unwrap();
+        store
+            .upsert(&dev_v3("id-a", "a", "A", &["10.0.0.1"]))
+            .unwrap();
+        store
+            .upsert(&dev_v3("id-b", "b", "B", &["10.0.0.2"]))
+            .unwrap();
 
         // v3 removal by deviceId.
         store.remove(Some("id-b"), None, "b").unwrap();
-        assert_eq!(store.load_all(), vec![dev_v3("id-a", "a", "A", &["10.0.0.1"])]);
+        assert_eq!(
+            store.load_all(),
+            vec![dev_v3("id-a", "a", "A", &["10.0.0.1"])]
+        );
 
         // Unknown identity: idempotent success.
         store.remove(Some("id-z"), None, "nobody").unwrap();
@@ -764,7 +774,9 @@ mod tests {
     fn remove_also_drops_merged_legacy_duplicates() {
         let store = temp_store();
         store.upsert(&dev_legacy(DEV_HOST, DEV_USER)).unwrap();
-        store.upsert(&dev_v3("id-x", "u", "X", &["10.0.0.5"])).unwrap();
+        store
+            .upsert(&dev_v3("id-x", "u", "X", &["10.0.0.5"]))
+            .unwrap();
         // Forget the v3 device while naming its old LAN host: the legacy
         // duplicate must go with it.
         store.remove(Some("id-x"), Some(DEV_HOST), "u").unwrap();
@@ -776,7 +788,9 @@ mod tests {
         let store = temp_store();
         store.upsert(&dev_legacy("192.168.2.18", "seeed")).unwrap();
         store.upsert(&dev_legacy("10.0.0.7", "alice")).unwrap();
-        store.upsert(&dev_v3(DEV_ID, "seeed", "robotics", &["192.168.2.19"])).unwrap();
+        store
+            .upsert(&dev_v3(DEV_ID, "seeed", "robotics", &["192.168.2.19"]))
+            .unwrap();
 
         let candidates = store.legacy_merge_candidates("seeed", &["192.168.2.18", "192.168.2.19"]);
         assert_eq!(candidates, vec![dev_legacy("192.168.2.18", "seeed")]);
@@ -787,18 +801,31 @@ mod tests {
         let d = dev_v3("5dbfb124", "seeed", "mini", &["192.168.100.164"]);
         assert_eq!(d.account(), "seeed@5dbfb124");
         // Legacy keeps user@host.
-        assert_eq!(dev_legacy("jetson.local", "seeed").account(), "seeed@jetson.local");
+        assert_eq!(
+            dev_legacy("jetson.local", "seeed").account(),
+            "seeed@jetson.local"
+        );
     }
 
     #[test]
     fn resolve_uses_typed_password_first() {
         let secrets = FakeSecretStore::default();
         let store = temp_store();
-        store.upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST])).unwrap();
+        store
+            .upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST]))
+            .unwrap();
         secrets
             .set(SECRET_SERVICE, &format!("{DEV_USER}@{DEV_ID}"), "stored")
             .unwrap();
-        let pw = resolve_password(&store, &secrets, Some(DEV_ID), DEV_HOST, DEV_USER, Some("typed")).unwrap();
+        let pw = resolve_password(
+            &store,
+            &secrets,
+            Some(DEV_ID),
+            DEV_HOST,
+            DEV_USER,
+            Some("typed"),
+        )
+        .unwrap();
         assert_eq!(pw, "typed");
     }
 
@@ -810,13 +837,26 @@ mod tests {
         let b = dev_v3("id-b", "seeed", "B", &["10.0.0.2"]);
         store.upsert(&a).unwrap();
         store.upsert(&b).unwrap();
-        secrets.set(SECRET_SERVICE, "seeed@id-a", "stored-a").unwrap();
-        secrets.set(SECRET_SERVICE, "seeed@id-b", "stored-b").unwrap();
+        secrets
+            .set(SECRET_SERVICE, "seeed@id-a", "stored-a")
+            .unwrap();
+        secrets
+            .set(SECRET_SERVICE, "seeed@id-b", "stored-b")
+            .unwrap();
 
-        let pw = resolve_password(&store, &secrets, Some("id-b"), "10.0.0.2", "seeed", None).unwrap();
+        let pw =
+            resolve_password(&store, &secrets, Some("id-b"), "10.0.0.2", "seeed", None).unwrap();
         assert_eq!(pw, "stored-b");
         // Wire host may be ANY of the device's paths — the deviceId decides.
-        let pw = resolve_password(&store, &secrets, Some("id-a"), "irrelevant-entry-host", "seeed", Some("")).unwrap();
+        let pw = resolve_password(
+            &store,
+            &secrets,
+            Some("id-a"),
+            "irrelevant-entry-host",
+            "seeed",
+            Some(""),
+        )
+        .unwrap();
         assert_eq!(pw, "stored-a");
         // Unknown deviceId + a host that matches NO remembered path → missing.
         assert!(matches!(
@@ -825,7 +865,8 @@ mod tests {
         ));
         // Unknown deviceId but the host matches a legacy/v3 path → the host
         // lookup still resolves (merge-in-flight race safety).
-        let pw = resolve_password(&store, &secrets, Some("id-z"), "10.0.0.1", "seeed", None).unwrap();
+        let pw =
+            resolve_password(&store, &secrets, Some("id-z"), "10.0.0.1", "seeed", None).unwrap();
         assert_eq!(pw, "stored-a");
     }
 
@@ -839,11 +880,16 @@ mod tests {
             .upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST]))
             .unwrap();
         secrets
-            .set(SECRET_SERVICE, &format!("{DEV_USER}@{DEV_HOST}"), "legacy-secret")
+            .set(
+                SECRET_SERVICE,
+                &format!("{DEV_USER}@{DEV_HOST}"),
+                "legacy-secret",
+            )
             .unwrap();
         // A legacy entry for the same board makes the host lookup succeed.
         store.upsert(&dev_legacy(DEV_HOST, DEV_USER)).unwrap();
-        let pw = resolve_password(&store, &secrets, Some(DEV_ID), DEV_HOST, DEV_USER, None).unwrap();
+        let pw =
+            resolve_password(&store, &secrets, Some(DEV_ID), DEV_HOST, DEV_USER, None).unwrap();
         assert_eq!(pw, "legacy-secret");
     }
 
@@ -872,7 +918,9 @@ mod tests {
         // is the LAN host — resolution must still find the stored secret.
         let secrets = FakeSecretStore::default();
         let store = temp_store();
-        store.upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST])).unwrap();
+        store
+            .upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST]))
+            .unwrap();
         secrets
             .set(SECRET_SERVICE, &format!("{DEV_USER}@{DEV_ID}"), "stored")
             .unwrap();
@@ -886,8 +934,12 @@ mod tests {
         // ambiguous — the user must type the password.
         let secrets = FakeSecretStore::default();
         let store = temp_store();
-        store.upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST])).unwrap();
-        store.upsert(&dev_v3("id-b", "alice", "B", &["10.0.0.7"])).unwrap();
+        store
+            .upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST]))
+            .unwrap();
+        store
+            .upsert(&dev_v3("id-b", "alice", "B", &["10.0.0.7"]))
+            .unwrap();
         secrets
             .set(SECRET_SERVICE, &format!("{DEV_USER}@{DEV_ID}"), "stored")
             .unwrap();
@@ -901,7 +953,9 @@ mod tests {
     fn resolve_rejects_an_unremembered_identity() {
         let secrets = FakeSecretStore::default();
         let store = temp_store();
-        store.upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST])).unwrap();
+        store
+            .upsert(&dev_v3(DEV_ID, DEV_USER, "mini", &[DEV_HOST]))
+            .unwrap();
         secrets
             .set(SECRET_SERVICE, &format!("{DEV_USER}@{DEV_ID}"), "stored")
             .unwrap();

@@ -13,6 +13,7 @@ use std::os::raw::c_int as c_int_raw;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use super::error::RdpError;
 use super::ffi;
@@ -25,6 +26,26 @@ const DEFAULT_HEIGHT: c_int_raw = 720;
 /// Reserved key for the legacy single-session commands (`launch_remote_desktop`
 /// et al.), which predate the keyed multi-device API (V0.4).
 pub const LEGACY_SESSION_KEY: &str = "__legacy__";
+
+/// Upper bound for a session–worker join during teardown. A wedged FreeRDP
+/// worker (half-dead xrdp / frozen session) must never block `close_keyed` /
+/// `launch_entry` and strand the frontend in a permanent "launching" state
+/// (bug: 卡死会话关掉后重连永久转圈).
+const WORKER_JOIN_TIMEOUT: Duration = Duration::from_millis(4000);
+const WORKER_JOIN_POLL: Duration = Duration::from_millis(50);
+
+/// Join with a hard deadline. Returns `None` when the deadline expires; the
+/// caller must then abandon the handle (detach-equivalent) instead of waiting
+/// forever. Pure and unit-testable.
+fn join_with_deadline<T>(handle: JoinHandle<T>, deadline: Instant) -> Option<T> {
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(WORKER_JOIN_POLL);
+    }
+    Some(handle.join().expect("worker panicked"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionLaunchMode {
@@ -355,14 +376,35 @@ impl RdpSession {
         // the tab "×" feel instant even while the transport tears down.
         self._view.remove_from_window();
         unsafe { ffi::jr_session_disconnect(self.session) };
-        if let Some(w) = self.worker.take() {
-            let _ = w.join();
+        // Bounded join (bug fix): a wedged worker must never block teardown.
+        // On timeout we abandon the worker AND the C session + context it may
+        // still touch — a small, deliberate leak on a rare path, traded for
+        // guaranteed forward progress of close/relaunch.
+        let joined = match self.worker.take() {
+            Some(w) => join_with_deadline(w, Instant::now() + WORKER_JOIN_TIMEOUT),
+            None => Some(0),
+        };
+        match joined {
+            Some(_rc) => {
+                unsafe { ffi::jr_session_destroy(self.session) };
+                self.session = std::ptr::null_mut();
+                // SAFETY: worker joined → no callbacks in flight; reclaim the box.
+                unsafe { drop(Box::from_raw(self.context)) };
+                self.context = std::ptr::null_mut();
+            }
+            None => {
+                eprintln!(
+                    "[jr-flow] rdp worker join timeout ({:?}) — abandoning session (leaked worker + C ctx)",
+                    WORKER_JOIN_TIMEOUT
+                );
+                // Intentionally leak: the worker still owns `session` and may
+                // invoke callbacks into `context`. `self` is about to be
+                // dropped; leaving the raw pointers set is undefined behavior
+                // only for us — we null them so the struct stays inert.
+                self.session = std::ptr::null_mut();
+                self.context = std::ptr::null_mut();
+            }
         }
-        unsafe { ffi::jr_session_destroy(self.session) };
-        self.session = std::ptr::null_mut();
-        // SAFETY: worker joined → no callbacks in flight; reclaim the box.
-        unsafe { drop(Box::from_raw(self.context)) };
-        self.context = std::ptr::null_mut();
     }
 }
 
@@ -676,6 +718,29 @@ mod tests {
         assert_eq!(mgr.status_keyed("a"), RdpStatus::NotRunning);
         assert_eq!(mgr.status(), RdpStatus::NotRunning);
         assert!(mgr.all_statuses().is_empty());
+    }
+
+    #[test]
+    fn join_with_deadline_returns_when_worker_finishes() {
+        let handle = std::thread::spawn(|| 42u32);
+        let got = join_with_deadline(handle, Instant::now() + Duration::from_secs(5));
+        assert_eq!(got, Some(42u32));
+    }
+
+    #[test]
+    fn join_with_deadline_times_out_on_a_wedged_worker() {
+        // A worker that never returns must yield `None` ~instantly instead of
+        // blocking the caller forever (the stuck-session bug).
+        let handle = std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        });
+        let started = Instant::now();
+        let deadline = Instant::now() + Duration::from_millis(300);
+        assert_eq!(join_with_deadline(handle, deadline), None);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "bounded join must not block the caller"
+        );
     }
 
     #[tokio::test]

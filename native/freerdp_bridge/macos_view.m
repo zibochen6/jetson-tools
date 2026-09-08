@@ -1136,7 +1136,15 @@ void jr_clipboard_sync_start(void* session)
 	   * the worker on NSPasteboard. */
 	  NSString* s0 = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
 	  if (s0)
+	  {
 		  jr_clip_store_text(g_clipSession, [s0 UTF8String]);
+		  /* Multi-session clipboard bug: enqueue the same snapshot so the
+		   * worker ALSO announces ClientFormatList for this session. Without
+		   * this, a session that started in the background (or one whose
+		   * pasteboard never changed after switching tabs) never announces
+		   * its clipboard to xrdp and pasting into it stays dead. */
+		  jr_session_enqueue_local_clipboard_text(g_clipSession, [s0 UTF8String]);
+	  }
 	  if (g_clipTimer)
 		  [g_clipTimer invalidate];
 	  g_clipTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
