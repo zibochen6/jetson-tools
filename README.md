@@ -114,7 +114,7 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore /
 
   ```bash
   sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
-    libfreerdp3-dev libwinpr3-dev libcjson-dev libfuse3-dev \
+    freerdp3-dev libcjson-dev libfuse3-dev \
     libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libgl1 libegl1
   pnpm install
   pnpm tauri build --bundles deb
