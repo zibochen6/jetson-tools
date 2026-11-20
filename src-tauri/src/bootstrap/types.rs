@@ -44,6 +44,26 @@ pub struct EnvironmentFacts {
     /// permanently unable to reach sesman even though 3350 is listening.
     #[serde(default)]
     pub lo_ipv6_loopback: bool,
+    /// KI-044: `pkcheck` verdict for `NetworkManager.enable-disable-network`.
+    /// Ubuntu's stock NM polkit rule only matches `subject.local && subject.active`,
+    /// and an xrdp session is remote — the rule never applies, so the action falls
+    /// back to the policy default (`allow_inactive=no`) and the desktop's network
+    /// settings fail with "Not authorized to control networking".
+    #[serde(default)]
+    pub nm_polkit_ok: bool,
+    /// KI-045: `[Globals] ListenAddress` in sesman.ini is exactly `127.0.0.1`.
+    /// xrdp 0.9.17 derives chansrv's `use_unix_socket` from this single condition
+    /// (`chansrv_config.c`), defaulting to false. When false, chansrv listens on
+    /// TCP `7200 + display` while the xrdp front end still dials
+    /// `/run/xrdp/sockdir/xrdp_chansrv_socket_<display>` — the handshake can never
+    /// complete, so the channel server is abandoned and CLIPRDR never negotiates
+    /// (clipboard dead in both directions, surviving reconnects).
+    ///
+    /// Deliberately a *static* fact: the chansrv process and its listen socket
+    /// only exist mid-session, and chansrv deletes that socket once xrdp
+    /// connects, so probing runtime state would be unreliable.
+    #[serde(default)]
+    pub sesman_listen_local: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +117,24 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
             "IPv6 loopback (::1) is missing on lo — xrdp cannot reach sesman (KI-038)".into(),
         );
     }
+    if !facts.nm_polkit_ok {
+        issues.push(
+            "NetworkManager is not authorized in a remote session — changing WiFi from the \
+             desktop fails with \"Not authorized to control networking\" (KI-044)"
+                .into(),
+        );
+    }
+    // KI-045: unlike the chansrv runtime state, this one is static and always
+    // meaningful, so it belongs in `service_ok` — that is what routes an affected
+    // device into bootstrap, which rewrites ListenAddress.
+    if !facts.sesman_listen_local {
+        issues.push(
+            "sesman ListenAddress is not 127.0.0.1 — xrdp-chansrv will listen on TCP instead of \
+             the unix socket xrdp dials, so CLIPRDR never negotiates and the clipboard stays \
+             dead (KI-045)"
+                .into(),
+        );
+    }
 
     let any_installed = facts.xrdp_installed || facts.xorgxrdp_installed || facts.xfce_installed;
     let all_components = facts.xrdp_installed && facts.xorgxrdp_installed && facts.xfce_installed;
@@ -106,7 +144,13 @@ pub fn classify(facts: &EnvironmentFacts) -> RemoteEnvironmentReport {
         && facts.port_3389_listening
         && facts.port_3350_listening
         && facts.xrdp_in_ssl_cert_group
-        && facts.lo_ipv6_loopback;
+        && facts.lo_ipv6_loopback
+        && facts.nm_polkit_ok
+        && facts.sesman_listen_local;
+    // A missing chansrv socket is deliberately NOT part of `service_ok`: it only
+    // manifests mid-session, and bootstrap cannot conjure a socket without a
+    // login. It stays an issue (surfaced to the user + logs) while the state
+    // remains Ready — the client-side self-heal handles that case instead.
 
     let state = if all_components && service_ok && facts.session_configured && facts.xsessionrc_ok {
         RemoteEnvironmentState::Ready
@@ -172,6 +216,8 @@ mod tests {
             session_configured: true,
             xsessionrc_ok: true,
             lo_ipv6_loopback: true,
+            nm_polkit_ok: true,
+            sesman_listen_local: true,
         };
         overrides(&mut f);
         f
@@ -242,5 +288,25 @@ mod tests {
         let report = classify(&f);
         assert_eq!(report.state, RemoteEnvironmentState::Broken);
         assert!(report.issues.iter().any(|issue| issue.contains("ssl-cert")));
+    }
+
+    #[test]
+    fn classifies_broken_when_nm_polkit_unauthorized() {
+        // KI-044: stack looks perfectly healthy, yet the desktop's network
+        // settings are denied in a remote session.
+        let f = facts(|f| f.nm_polkit_ok = false);
+        let report = classify(&f);
+        assert_eq!(report.state, RemoteEnvironmentState::Broken);
+        assert!(report.issues.iter().any(|issue| issue.contains("KI-044")));
+    }
+
+    #[test]
+    fn classifies_broken_when_chansrv_would_use_tcp() {
+        // KI-045: services all look healthy, the desktop renders fine, yet the
+        // clipboard is dead because chansrv and xrdp disagree on the transport.
+        let f = facts(|f| f.sesman_listen_local = false);
+        let report = classify(&f);
+        assert_eq!(report.state, RemoteEnvironmentState::Broken);
+        assert!(report.issues.iter().any(|issue| issue.contains("KI-045")));
     }
 }

@@ -71,11 +71,87 @@ fn desktop_size_for(ns_window: *mut c_void, top_inset: f64) -> (c_int_raw, c_int
     (dw, dh)
 }
 
+/// Present target for a session's frames.
+///
+/// The callback context holds this behind an `Arc` so the native view cannot be
+/// released while the FreeRDP worker may still call `on_frame` (KI-043). The
+/// trait exists so the ownership rule is expressible in the type system and so
+/// a test double can stand in for the real view (which cannot be constructed
+/// under `cargo test` — `jr_view_create` does a `dispatch_sync` to the main
+/// queue and deadlocks without a running AppKit loop).
+trait FrameTarget: Send + Sync {
+    fn frame_target(&self) -> *mut c_void;
+}
+
+impl FrameTarget for NativeView {
+    fn frame_target(&self) -> *mut c_void {
+        self.raw()
+    }
+}
+
 /// Shared state read by the C callbacks via the `user` pointer.
+///
+/// `view` is an `Arc` on purpose. The box holding this struct is reclaimed only
+/// after a *successful* worker join (`RdpSession::shutdown`); every abandonment
+/// path leaks the box instead, which keeps this strong reference alive for
+/// exactly as long as the worker can call back. Making it a raw pointer again
+/// reintroduces the P1-5 use-after-free (KI-043).
 struct SessionContext {
     session: *mut ffi::jr_session,
-    view: *mut c_void,
+    view: Arc<dyn FrameTarget>,
     usable_frame: Arc<AtomicBool>,
+}
+
+/// Whether a session may free its C session + context box.
+///
+/// Conservative by construction: only when the worker has stopped *and* no
+/// AppKit event handler can still reach the session through the view's input
+/// binding. Pure so the rule is unit-testable.
+fn may_reclaim(worker_finished: bool, input_attached: bool) -> bool {
+    worker_finished && !input_attached
+}
+
+/// The AppKit main thread, recorded once at startup (see `record_main_thread`).
+static MAIN_THREAD: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+/// Record the calling thread as the main thread. Must be called from `run()`,
+/// which Tauri invokes on the main thread.
+pub fn record_main_thread() {
+    let _ = MAIN_THREAD.set(std::thread::current().id());
+}
+
+/// Guard the manager entry points that hold a manager lock across a main-queue
+/// *synchronous* hop (`refocus`/`unfocus` → `jr_view_attach_input`, which is a
+/// `dispatch_sync(main)` in `macos_view.m`).
+///
+/// The deadlock (P1-11) is: a non-main thread holds the lock and waits for the
+/// main thread, while the main thread runs a synchronous IPC command that waits
+/// for the same lock. `#[tauri::command(async)]` on every main-thread-reachable
+/// reader is what breaks the cycle today; this assertion makes re-breaking it a
+/// debug-build failure instead of a shipped freeze. Called from the main thread
+/// these entry points would be harmless (the hop inlines), but nothing does that
+/// — the commands are all `async fn` — and a future sync command would.
+fn assert_off_main_thread(what: &str) {
+    if let Some(main) = MAIN_THREAD.get() {
+        debug_assert_ne!(
+            std::thread::current().id(),
+            *main,
+            "{what} holds a session-manager lock across a dispatch_sync(main); \
+             calling it on the main thread deadlocks the app (P1-11)"
+        );
+    }
+}
+
+/// DEV-only wedge injector for the P1-11 freeze. `JR_RDP_FOCUS_HOLD_MS=300`
+/// widens the window in which `focus` holds the manager locks across its
+/// `dispatch_sync(main)`, so the 1 Hz status poll is guaranteed to collide
+/// instead of hitting it by luck. No effect when unset.
+fn hold_for_deadlock_repro() {
+    if let Ok(ms) = std::env::var("JR_RDP_FOCUS_HOLD_MS") {
+        if let Ok(ms) = ms.parse::<u64>() {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
+    }
 }
 
 /// XRDP can complete the TLS/RDP handshake even when `xrdp-sesman` is stuck.
@@ -120,8 +196,9 @@ unsafe extern "C" fn on_frame(
     _w: c_int_raw,
     _h: c_int_raw,
 ) {
-    // SAFETY: `user` is a boxed `SessionContext` that outlives the worker thread
-    // (reclaimed only after the worker is joined, in `RdpSession::shutdown`).
+    // SAFETY: `user` is a boxed `SessionContext`. It is reclaimed (or
+    // deliberately leaked) only from the worker's own teardown path, never while
+    // a callback can be in flight — see `may_reclaim` / KI-043.
     let ctx = unsafe { &*(user as *const SessionContext) };
     let mut buf: *const u8 = std::ptr::null();
     let mut w: c_int_raw = 0;
@@ -139,7 +216,9 @@ unsafe extern "C" fn on_frame(
             }
         }
         // Copies the buffer before returning (macos_view.m does the copy).
-        unsafe { ffi::jr_view_present_buffer(ctx.view, buf, w, h, stride, 0, 0, w, h) };
+        unsafe {
+            ffi::jr_view_present_buffer(ctx.view.frame_target(), buf, w, h, stride, 0, 0, w, h)
+        };
     }
 }
 
@@ -159,7 +238,10 @@ unsafe extern "C" fn verify_changed(
 
 pub struct RdpSession {
     session: *mut ffi::jr_session,
-    _view: NativeView,
+    /// Held by `Arc` so the callback context can keep the view alive for as
+    /// long as the worker may emit a frame (KI-043). Destroying the view is
+    /// therefore deferred to the last `Arc` drop, not to this struct's drop.
+    view: Arc<NativeView>,
     context: *mut SessionContext,
     worker: Option<JoinHandle<c_int>>,
     finished: Arc<AtomicBool>,
@@ -206,7 +288,7 @@ impl RdpSession {
         top_inset: Option<f64>,
         mode: SessionLaunchMode,
     ) -> Result<Self, RdpError> {
-        let view = NativeView::create();
+        let view = Arc::new(NativeView::create());
         view.set_fill(0x1e, 0x20, 0x26); // subtle dark placeholder until first frame
         if mode == SessionLaunchMode::Focused {
             match top_inset {
@@ -220,10 +302,11 @@ impl RdpSession {
         let usable_frame = Arc::new(AtomicBool::new(false));
         let ctx = Box::new(SessionContext {
             session: std::ptr::null_mut(),
-            view: view.raw(),
+            view: Arc::clone(&view) as Arc<dyn FrameTarget>,
             usable_frame: usable_frame.clone(),
         });
-        // SAFETY: the box is reclaimed in `shutdown` after the worker is joined.
+        // SAFETY: the box is reclaimed only after a successful worker join; all
+        // abandonment paths leak it on purpose (KI-043).
         let ctx_ptr: *mut SessionContext = Box::into_raw(ctx);
 
         let certificate_name =
@@ -293,7 +376,7 @@ impl RdpSession {
 
         Ok(Self {
             session,
-            _view: view,
+            view,
             context: ctx_ptr,
             worker: Some(worker),
             finished,
@@ -312,6 +395,19 @@ impl RdpSession {
         self.usable_frame.load(Ordering::SeqCst)
     }
 
+    /// CLIPRDR is negotiated: the server sent MonitorReady, which only happens
+    /// once xrdp reached its channel server (`xrdp-chansrv`). It arrives during
+    /// the connect handshake, so on a healthy device this is already true by the
+    /// time the desktop is usable (KI-045).
+    pub fn clip_ready(&self) -> bool {
+        if self.session.is_null() {
+            return false;
+        }
+        // SAFETY: `session` outlives the worker (see `shutdown`), and the C side
+        // only reads a plain flag set by the CLIPRDR callback.
+        unsafe { ffi::jr_session_clip_ready(self.session) != 0 }
+    }
+
     /// Yield the screen: detach input + clipboard, remove the view from the
     /// window. The RDP connection itself keeps running (multi-device, V0.4).
     pub fn unfocus(&mut self) {
@@ -319,14 +415,14 @@ impl RdpSession {
             return;
         }
         if self.input_attached {
-            self._view.attach_input(None);
+            self.view.attach_input(None);
             self.input_attached = false;
         }
         if self.clipboard_active {
             unsafe { ffi::jr_clipboard_sync_stop() };
             self.clipboard_active = false;
         }
-        self._view.remove_from_window();
+        self.view.remove_from_window();
     }
 
     /// Take the screen back: remount the view below the tab-bar strip and
@@ -342,10 +438,10 @@ impl RdpSession {
         }
         // SAFETY: `ns_window` is the live Tauri main window handle.
         match top_inset {
-            Some(inset) => unsafe { self._view.add_to_window_inset(ns_window, inset) },
-            None => unsafe { self._view.add_to_window(ns_window) },
+            Some(inset) => unsafe { self.view.add_to_window_inset(ns_window, inset) },
+            None => unsafe { self.view.add_to_window(ns_window) },
         }
-        self._view.attach_input(Some(self.session));
+        self.view.attach_input(Some(self.session));
         self.input_attached = true;
         if !self.clipboard_active {
             unsafe { ffi::jr_clipboard_sync_start(self.session as *mut c_void) };
@@ -361,7 +457,7 @@ impl RdpSession {
         // Stop input forwarding first (synchronous), so no event handler can
         // touch the session after `jr_session_destroy` below.
         if self.input_attached {
-            self._view.attach_input(None);
+            self.view.attach_input(None);
             self.input_attached = false;
         }
         if self.clipboard_active {
@@ -374,7 +470,7 @@ impl RdpSession {
         // so a closed-but-focused session would leave its last desktop frame
         // on screen forever, hiding the webview home. Removing first also makes
         // the tab "×" feel instant even while the transport tears down.
-        self._view.remove_from_window();
+        self.view.remove_from_window();
         unsafe { ffi::jr_session_disconnect(self.session) };
         // Bounded join (bug fix): a wedged worker must never block teardown.
         // On timeout we abandon the worker AND the C session + context it may
@@ -386,24 +482,97 @@ impl RdpSession {
         };
         match joined {
             Some(_rc) => {
-                unsafe { ffi::jr_session_destroy(self.session) };
-                self.session = std::ptr::null_mut();
-                // SAFETY: worker joined → no callbacks in flight; reclaim the box.
-                unsafe { drop(Box::from_raw(self.context)) };
-                self.context = std::ptr::null_mut();
+                // The join returned, so the worker closure has fully exited.
+                self.reclaim(true);
             }
             None => {
                 eprintln!(
-                    "[jr-flow] rdp worker join timeout ({:?}) — abandoning session (leaked worker + C ctx)",
+                    "[jr-flow] rdp worker join timeout ({:?}) — abandoning session (leaked worker + C ctx + view)",
                     WORKER_JOIN_TIMEOUT
                 );
-                // Intentionally leak: the worker still owns `session` and may
-                // invoke callbacks into `context`. `self` is about to be
-                // dropped; leaving the raw pointers set is undefined behavior
-                // only for us — we null them so the struct stays inert.
+                // Intentionally leak: the worker still owns `session`, may
+                // invoke callbacks into `context`, and `context` now holds the
+                // only remaining `Arc<NativeView>`. Freeing the view here is
+                // exactly what caused the P1-5 use-after-free (KI-043): the
+                // worker emits at least one more frame after this point, no
+                // matter what `disconnecting` says.
                 self.session = std::ptr::null_mut();
                 self.context = std::ptr::null_mut();
             }
+        }
+    }
+
+    /// Reclaim the C session + callback context once the worker is gone.
+    ///
+    /// `Box::from_raw` is what drops the context's `Arc<NativeView>`, so running
+    /// this while the worker can still call `on_frame` frees the view under it.
+    ///
+    /// `worker_finished` is passed in rather than re-derived from `self.worker`:
+    /// `shutdown` has already `take()`n the handle by the time it reclaims, so
+    /// the field can no longer answer the question.
+    fn reclaim(&mut self, worker_finished: bool) {
+        // Nothing to free: `shutdown` already reclaimed (both nulled), or it
+        // deliberately leaked and nulled them (the context box is what keeps
+        // the view alive, so it must NOT be touched here).
+        if self.session.is_null() || self.context.is_null() {
+            return;
+        }
+        debug_assert!(
+            may_reclaim(worker_finished, self.input_attached),
+            "reclaim() called while the worker can still call back"
+        );
+        unsafe { ffi::jr_session_destroy(self.session) };
+        self.session = std::ptr::null_mut();
+        // SAFETY: worker joined → no callbacks in flight; reclaim the box.
+        unsafe { drop(Box::from_raw(self.context)) };
+        self.context = std::ptr::null_mut();
+    }
+
+    /// Non-blocking teardown used by `Drop` (and only by `Drop`).
+    ///
+    /// Deliberately touches no main-queue *synchronous* entry point: `Drop` can
+    /// run while the manager mutexes are held (a replaced session is dropped
+    /// inside `sessions.insert`) or on the AppKit main thread during state
+    /// teardown, so `attach_input` — which is a `dispatch_sync(main)` — would
+    /// deadlock the app (P1-11). It also never joins, so quitting with wedged
+    /// sessions cannot hang.
+    fn detach_fast(&mut self) {
+        if self.session.is_null() {
+            return;
+        }
+        // Owner guard: `jr_clipboard_sync_stop` clears *global* C-side state and
+        // takes no session argument, so an unguarded stop from a replaced
+        // background session would silently kill the focused session's CLIPRDR
+        // sync (KI-040). Only the session that started the sync may stop it.
+        if self.clipboard_active {
+            unsafe { ffi::jr_clipboard_sync_stop() };
+            self.clipboard_active = false;
+        }
+        unsafe { ffi::jr_session_disconnect(self.session) };
+        self.view.remove_from_window();
+    }
+}
+
+/// `Drop` runs on paths that never call `shutdown()` — a session replaced by a
+/// concurrent `launch_session` (`sessions.insert`), and managed-state teardown
+/// at app exit. Without it those paths would free the view while the worker was
+/// still emitting (P1-5 / KI-043). It must stay non-blocking and barrier-free;
+/// see `detach_fast`.
+impl Drop for RdpSession {
+    fn drop(&mut self) {
+        self.detach_fast();
+        // Opportunistic reclaim: only when the worker is provably gone AND no
+        // AppKit event handler can still reach the session through the view.
+        // `is_some_and` (not `is_none_or`) matters: a `None` handle means
+        // `shutdown` already took it and made the reclaim/leak decision for us,
+        // so we must not second-guess it — the null guard in `reclaim` covers
+        // that. `join()` on a finished thread is instant, so quit cannot hang.
+        // Otherwise we deliberately leak the worker + C session + ctx (and its
+        // `Arc<NativeView>`): the worker may still call `on_frame`, so the view
+        // must outlive it. Dropping the `JoinHandle` below merely detaches.
+        let worker_finished = self.worker.as_ref().is_some_and(|w| w.is_finished());
+        if may_reclaim(worker_finished, self.input_attached) {
+            self.reclaim(worker_finished);
         }
     }
 }
@@ -416,6 +585,27 @@ impl RdpSession {
 pub struct RdpSessionManager {
     sessions: Mutex<HashMap<String, RdpSession>>,
     focused: Mutex<Option<String>>,
+    /// Session keys with a launch in flight. Two overlapping `launch_session`
+    /// calls for one key would otherwise both reach `sessions.insert`, and the
+    /// loser's `RdpSession` is dropped silently — freeing a view whose worker is
+    /// still running (KI-043 / audit N-01).
+    launching: Mutex<std::collections::HashSet<String>>,
+}
+
+/// RAII marker that a launch for one key is in flight. Released on drop, so the
+/// claim covers every exit path of the command that took it (including `?`).
+#[must_use = "dropping the claim immediately re-opens the double-launch race"]
+pub struct LaunchClaim<'a> {
+    manager: &'a RdpSessionManager,
+    id: String,
+}
+
+impl Drop for LaunchClaim<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut launching) = self.manager.launching.lock() {
+            launching.remove(&self.id);
+        }
+    }
 }
 
 impl Default for RdpSessionManager {
@@ -429,7 +619,26 @@ impl RdpSessionManager {
         Self {
             sessions: Mutex::new(HashMap::new()),
             focused: Mutex::new(None),
+            launching: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// Claim the right to launch `id`. Returns `None` when another launch for
+    /// the same key is already in flight — the caller should treat that as
+    /// "already running" rather than starting a second worker.
+    ///
+    /// The claim must be held for the *whole* command, not just around
+    /// `launch_entry`: two calls spend seconds in connection setup before they
+    /// ever reach the manager, so a guard inside `launch_entry` cannot see them.
+    pub fn claim_launch(&self, id: &str) -> Option<LaunchClaim<'_>> {
+        let mut launching = self.launching.lock().unwrap();
+        if !launching.insert(id.to_string()) {
+            return None;
+        }
+        Some(LaunchClaim {
+            manager: self,
+            id: id.to_string(),
+        })
     }
 
     // ---- legacy single-session API (unchanged semantics) ----
@@ -506,6 +715,7 @@ impl RdpSessionManager {
         top_inset: Option<f64>,
         mode: SessionLaunchMode,
     ) -> Result<(), RdpError> {
+        assert_off_main_thread("RdpSessionManager::launch_entry");
         // BEFORE creating the new session, make every prior session yield the
         // global resources (clipboard sync, input, screen). Ordering matters:
         // the outgoing sessions' `jr_clipboard_sync_stop` must run BEFORE the
@@ -574,6 +784,7 @@ impl RdpSessionManager {
     /// switch). Errors when the session is missing or already exited.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn focus(&self, id: &str, ns_window: *mut c_void, top_inset: f64) -> Result<(), RdpError> {
+        assert_off_main_thread("RdpSessionManager::focus");
         let mut sessions = self.sessions.lock().unwrap();
         let mut focused = self.focused.lock().unwrap();
         if focused.as_deref() == Some(id) {
@@ -589,6 +800,7 @@ impl RdpSessionManager {
             }
         }
         if let Some(target) = sessions.get_mut(id) {
+            hold_for_deadlock_repro();
             target.refocus(ns_window, top_inset);
         }
         *focused = Some(id.to_string());
@@ -598,6 +810,7 @@ impl RdpSessionManager {
     /// Remove every session from the screen (show the webview home) while
     /// keeping the connections alive.
     pub fn hide_all(&self) {
+        assert_off_main_thread("RdpSessionManager::hide_all");
         let mut sessions = self.sessions.lock().unwrap();
         let mut focused = self.focused.lock().unwrap();
         if let Some(fid) = focused.take() {
@@ -674,6 +887,17 @@ impl RdpSessionManager {
             .is_some_and(RdpSession::has_usable_frame)
     }
 
+    /// CLIPRDR readiness for one session (KI-045). Polled after a desktop comes
+    /// up: a value that never flips means xrdp could not reach `xrdp-chansrv`,
+    /// so the clipboard is dead and a one-shot self-heal should run.
+    pub fn clip_ready_keyed(&self, id: &str) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(RdpSession::clip_ready)
+    }
+
     pub fn any_running(&self) -> bool {
         self.sessions
             .lock()
@@ -685,17 +909,26 @@ impl RdpSessionManager {
     /// Release exited sessions (except the focused one — the frontend decides
     /// how to surface a dead desktop before it is swept).
     pub fn clear_exited(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
-        let focused = self.focused.lock().unwrap().clone();
-        let dead: Vec<String> = sessions
-            .iter_mut()
-            .filter(|(id, s)| Some(id.as_str()) != focused.as_deref() && !s.is_running())
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in dead {
-            if let Some(mut s) = sessions.remove(&id) {
-                s.shutdown();
-            }
+        // Take ownership of the dead sessions out of the map, then shut them
+        // down OUTSIDE the lock. `shutdown` can block for up to
+        // `WORKER_JOIN_TIMEOUT` and calls `attach_input(None)` (a
+        // `dispatch_sync(main)`), so holding the lock across it would stall
+        // every other manager call for seconds and re-open the lock-vs-main-
+        // thread cycle that freezes the app (P1-11).
+        let dead: Vec<RdpSession> = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let focused = self.focused.lock().unwrap().clone();
+            let ids: Vec<String> = sessions
+                .iter_mut()
+                .filter(|(id, s)| Some(id.as_str()) != focused.as_deref() && !s.is_running())
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.into_iter()
+                .filter_map(|id| sessions.remove(&id))
+                .collect()
+        };
+        for mut s in dead {
+            s.shutdown();
         }
     }
 }
@@ -779,5 +1012,48 @@ mod tests {
         let last_pixel = 3 * 8 + 4;
         pixels[last_pixel..last_pixel + 3].copy_from_slice(&[30, 80, 120]);
         assert!(frame_is_usable(&pixels, 2, 4, 8));
+    }
+
+    // ---- KI-043: the session/view ownership rules ----
+
+    /// `reclaim()` frees the callback context, which drops the last
+    /// `Arc<NativeView>` once the session struct goes too. Running it while the
+    /// worker can still call `on_frame` is the P1-5 use-after-free, so the gate
+    /// must be conservative on BOTH conditions.
+    #[test]
+    fn reclaim_requires_a_finished_worker_and_detached_input() {
+        assert!(may_reclaim(true, false), "quiet worker + detached input");
+        assert!(
+            !may_reclaim(false, false),
+            "a running worker may still present — reclaiming would free the view under it"
+        );
+        assert!(
+            !may_reclaim(true, true),
+            "input still attached: an AppKit event could reach the session after destroy"
+        );
+        assert!(!may_reclaim(false, true));
+    }
+
+    /// Two overlapping launches for one key must not both proceed: the loser's
+    /// `RdpSession` would be dropped by `sessions.insert` while its worker was
+    /// still emitting into the view (KI-043 / audit N-01).
+    #[test]
+    fn concurrent_launch_for_a_key_is_rejected_until_the_first_releases() {
+        let mgr = RdpSessionManager::new();
+        let first = mgr.claim_launch("seeed@host").expect("first claim wins");
+        assert!(
+            mgr.claim_launch("seeed@host").is_none(),
+            "a second launch for the same key must be refused"
+        );
+        // A different device is unaffected — multi-device launches are parallel.
+        let other = mgr
+            .claim_launch("seeed@other")
+            .expect("a distinct key is independent");
+        drop(other);
+        drop(first);
+        assert!(
+            mgr.claim_launch("seeed@host").is_some(),
+            "the claim must be released on drop so a retry can proceed"
+        );
     }
 }

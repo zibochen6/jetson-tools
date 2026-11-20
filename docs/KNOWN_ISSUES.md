@@ -81,10 +81,13 @@
 
 ## KI-013 — Embedded 桌面纯黑屏：RDPGFX 未接线（已修复）
 - **现象**：Phase 4B-2 真机 Native View 已出现但纯黑；headless probe `EndPaint` 钩子**永不触发**（`on_frame`=0），`gdi_init_ex` 却正常打印 `Local/Remote framebuffer`。
-- **根因**：`gdi_init()` 只接线 **legacy GDI** 路径（BitmapUpdate/绘图指令/SurfaceBits），**不注册 RDPGFX 图形管线**（`gdi_StartFrame/EndFrame/SurfaceCommand/CreateSurface/UpdateSurfaces`）。XRDP 默认协商 RDPGFX → 桌面经 GFX 通道下发，未接 `gdi_graphics_pipeline_init(gdi, gfx)` 时**整帧被静默丢弃**，`primary_buffer` 全零 → 纯黑且 `EndPaint` 不触发。参考客户端在 RDPGFX 动态通道 connect 时懒调用该函数（`client/common/client.c:1610`）。
-- **影响**：所有走 RDPGFX 的 XRDP 桌面；`endpaint=0` 是典型信号（「连上了却收不到帧」）。
+- **根因（叙述于 2026-09-15 更正）**：`gdi_init()` 只接线 **legacy GDI** 路径（BitmapUpdate/绘图指令/SurfaceBits），**不注册 RDPGFX 图形管线**（`gdi_StartFrame/EndFrame/SurfaceCommand/CreateSurface/UpdateSurfaces`）。参考客户端在 RDPGFX 动态通道 connect 时懒调用 `gdi_graphics_pipeline_init`（`client/common/client.c:1610`），未订阅 PubSub 通道事件时该接线不发生。
+  > **原文称「XRDP 默认协商 RDPGFX → 桌面经 GFX 通道下发」，该断言不成立。** xrdp 0.9.x（含两台目标设备上的 0.9.17 / 0.9.24）源码树里**没有 EGFX 模块**，无从协商 RDPGFX（`xrdp --version` 无 `--enable-x264`/`--enable-openh264`，无 `/etc/xrdp/gfx.toml`）。0.9.x 实际走 **legacy Fastpath Surface Commands + RemoteFX**——`gdi_graphics_pipeline_init()` 在 FreeRDP 侧同时接线这两条路径，所以**接线动作本身是对的**，只是被错误归因。
+  > 真正让画面出现的是**那个无条件 33ms tick**；黑屏的原始机制（为何 `EndPaint` 不触发）**当时并未被证实**。完整证据见 KI-042。
+- **影响**：所有需要 GFX / surface-commands 接线的桌面；`endpaint=0` 是典型信号（「连上了却收不到帧」）。
 - **修复**：`bridge.c` `jr_pre_connect` 里 `PubSub_SubscribeChannelConnected(instance->context->pubSub, freerdp_client_OnChannelConnectedEventHandler)`（默认处理器内部已含 RDPGFX→gdi 接线），post_disconnect 反订阅。另因 GFX 更新不保证调用 legacy `EndPaint`，RDP event loop 每 33ms 提交一次已解码的 `primary_buffer`，使 native view 不会停在占位黑色。见 `EMBEDDED_RDP.md` §7。
-- **状态**：✅ 真机（SSH 隧道）视觉确认：XFCE 桌面与终端内容均可见（2026-09-02）。
+  > **该修复保留，但改标为「防御性」**：对真正支持 GFX 的服务端（Windows / xrdp ≥ 0.10.2）它是唯一保护，且与 FreeRDP 参考客户端一致；对本项目的 xrdp 0.9.x 它不参与实际帧路径。
+- **状态**：✅ 真机（SSH 隧道）视觉确认：XFCE 桌面与终端内容均可见（2026-09-02）。根因叙述于 2026-09-15 更正，见 KI-042。
 
 ## KI-014 — xrdp TLS 私钥权限：`xrdp` 用户在 `ssl-cert` 组外（自动修复）
 - **现象**：某时刻起所有 RDP 连接在 X.224/CR-TPDU 阶段被掐断；设备日志 `Cannot read private key file /etc/xrdp/key.pem: Permission denied`。
@@ -356,3 +359,143 @@
   - `bridge.c jr_session_connect`：`FreeRDP_TcpConnectTimeout=10000`，冻结的 connect 阶段有上界。
   - 前端 `sessionsStore.relaunch`：`withHardTimeout` 120s 硬天花（合法最坏 ≈75s），超时按 `rdp_failed` 落 error 可点击重试，即使用户遇到新的后端卡死也不再「永久转圈」。
 - **状态**：✅ 已随 0.3.9 发布（2026-09-08）；真机卡死场景回归 PENDING。设备侧卡死根因（KI-015 xfwm4 段错误嫌疑或他因）待真机日志另开子任务诊断。
+
+## KI-042 — 远程桌面实时画面「一帧一帧浮现」：客户端零编码协商 + 连接类型非 LAN（已修复，真机验证）
+
+- **症状（用户报告）**：把 App 当远程 GUI 显示器用——在 Jetson 上跑实时目标检测 / 摄像头预览（`cv2.imshow`），画面不流畅，**一帧一帧浮现**（slideshow / 逐步刷出），不是连续视频。
+- **量化基线（Thor dk，1280×700 全屏噪声）**：远程产出端 **151.9 fps**，端到端交付仅 **1.7 fps**。产出端能生成的帧比通路能承载的多 ~90 倍 → **脚本不是瓶颈**。
+- **根因（两个独立且都必须满足的条件，任一缺失都静默退化为 legacy bitmap 路径）**：
+
+  1. **连接类型必须是 `CONNECTION_TYPE_LAN`(0x06)，不能用 AUTODETECT**。xrdp 只在客户端 Info PDU 里声明 LAN 时才创建编码器：
+     `xrdp/xrdp_encoder.c:60` — `if (client_info->mcs_connection_type != CONNECTION_TYPE_LAN) return 0;`
+     该字段由 `libxrdp/xrdp_sec.c:2126` 从客户端 Info PDU 读出。
+     FreeRDP **库**默认值是 `AUTODETECT`(0x07)，`xfreerdp` 的默认也是——所以连 README 里那条手工验证用的 `sdl-freerdp` 命令**同样没有编码器**。
+  2. **必须显式开启 bitmap codec**。FreeRDP **库 API** 把每个 codec 都留成 FALSE：`settings.c` 从不给 `RemoteFxCodec`/`NSCodec`/`JpegCodec` 赋值（calloc 零值），`SupportGraphicsPipeline` 由 `ServerMode` 推导（客户端恒 FALSE）。只有 CLI 会开（`cmdline.c::prepare_default_settings()` → `freerdp_set_connection_type()`），而**只有 AUTODETECT 分支会开**——LAN 分支不会。两处都没做到时 `rdp_write_bitmap_codecs_capability_set()` 发出去的 `bitmapCodecCount == 0`，xrdp 解析出 `rfx_codec_id = 0`。
+
+  后果：客户端与 `sdl-freerdp` 都在 legacy bitmap/order 路径上跑画面（1280×724×4B ≈ 3.7 MB/帧，摄影类内容压缩比接近 1:1）。
+- **真机证实（修复前）**：`~/.xorgxrdp.<display>.log` 只有 `jpeg support 0`，**没有** `got RFX capture` / `got H264 capture`——而 `libxorgxrdp.so` 里只有这两条 capture 模式日志串，对应 `xorgxrdp/module/rdpClientCon.c:887-905` 仅有的两个加速分支（`capture_code==2` RFX / `==3` H264）。
+- **修复**（`native/freerdp_bridge/bridge.c` `jr_session_connect`，在 `freerdp_client_start` 之前）：
+  ```c
+  freerdp_set_connection_type(settings, CONNECTION_TYPE_LAN);   /* 必须 LAN */
+  freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_JpegCodec, TRUE);
+  /* + 6 个桌面装饰性能提示压到省流量侧 */
+  ```
+- **修复后真机结果（Thor dk，同设备同内容 A/B）**：
+
+  | | 交付 fps | emit 速率 |
+  |---|---|---|
+  | 修复前（legacy bitmap） | **1.7** | 33.6/s |
+  | 仅开 codec + AUTODETECT（无效中间态） | — | — |
+  | codec + LAN（RFX 生效） | **6.3** | **1032/s** |
+  | codec + LAN + 呈现节流 | **6.3** | **12.5/s** |
+  | 同上，真实内容（渐变+移动方块） | **14.5** | 16.5/s |
+
+  设备端确认：`rdpClientConProcessMsgClientInfo: got RFX capture` + `cap_width 1280 cap_height 768`。J501（xrdp 0.9.17 / xorgxrdp 0.2.17）同样成立。
+- **伴生修复（N-03 / RDN-02，同一处代码）**：原事件循环在**每条解码 PDU 批次后**都发射一帧整帧，RFX 生效后变成 ~1000 次/秒的 `malloc`+`memcpy`+`dispatch`（≈3.8 GB/s），反过来饿死同一个 worker 线程上的解码。改为 `jr_maybe_emit`：按 33ms 限速 + `EndPaint` 置脏才发射，并保留「GFX 已连 / 500ms 心跳」安全网。emit 1032/s → 12.5/s（82×），**但不改善帧率**——证明发送洪水不是帧率瓶颈。
+- **剩余上限（设备侧，不在本项目可控范围）**：运行期间 Xorg 进程占单核 **54–90%**，系统 86–90% 空闲 → 瓶颈是 xorgxrdp 单线程、**无 SIMD** 的 RFX 编码（`module/rdpSimd.c` 的 SIMD 为 x86 专属，aarch64 全走标量 C）。理论上限 25 fps（`MIN_MS_BETWEEN_FRAMES 40`，0.9.x 无配置开关）未触及，即**编码跟不上而非节流**。要突破需 xrdp ≥ 0.10.2 + `--enable-x264` + `gfx.toml`（Ubuntu 包不提供，需源码构建）。
+- **可观测性（防复发）**：新增 `[jr-nego]` 单行日志，每次连接打印：
+  `[jr-nego] connType=6 rfx=1 rfxId=0 jpeg=1 jpegId=0 ns=0 nsId=0 gfx=0 gfxDvc=0 mfrs=3948544`
+  期望形状：`connType=6 rfx=1 gfxDvc=0`（xrdp 0.9 无 EGFX，故 GFX 恒 0）。
+  > `rfxId=0` 是**正常**的：xrdp 在自己的 Demand Active 里把 RFX 的 codecID 写成 0（"client sets"），真正的 id 由客户端在 Confirm Active 里给出。
+- **服务端 oracle**：`ssh <jetson> 'grep -E "got RFX capture" ~/.xorgxrdp.10.log'`。客户端 `[jr-nego] rfx=1` 但服务端无此行为 → 失败在 xrdp 侧（先查 `mcs_connection_type` 与 `xrdp_caps_process_codecs`）。
+- **验收门禁**：App 的交付帧率必须 **≥** 同一隧道下 `sdl-freerdp` 的对照值。注意默认参数的 `sdl-freerdp` 走 AUTODETECT，本身也没有编码器；要拿它当「好」的对照需 `sdl-freerdp /network:lan /rfx:on ...`。
+- **状态**：✅ 真机验证通过（2026-09-15，Thor dk + Robotics-J501 双设备）。1.7 → 6.3 fps（最坏情形）/ 14.5 fps（真实内容）。
+
+## KI-043 — 闪退 + 卡死：会话生命周期上的 `JRView` UAF 与主线程死锁（已修复，真机验证）
+
+用户报告的「用一半闪退卡死」是**两个独立的 P1**，都落在会话生命周期这条路径上。它们不是本次视频修复引入的：崩溃的是 `/Applications` 里的 **0.3.9 release 二进制**（11:14 启动、13:33 崩溃），不含本轮改动。两条都已被项目自己的两轮审计记录（`docs/audit/2026-09-14`、`2026-09-15`）为 `still-open`，且**从未修复**。
+
+现场崩溃栈（决定性证据）：
+
+```
+Thread 26 Crashed:  EXC_BAD_ACCESS (SIGSEGV)
+0 libobjc.A.dylib   objc_retain + 16
+1 jetson-remote     jr_view_present_buffer + 52
+2 jetson-remote     on_frame + 508
+3 jetson-remote     jr_session_connect + 340     ← FreeRDP worker 事件循环
+```
+
+### A. `JRView` use-after-free（= 审计 P1-5 / RD-02 / RDN-05）→ 闪退
+
+- **机制**：`RdpSession::shutdown` 的有界 join（4s）**超时**分支（`session.rs` 的 `None` 分支）只把 `session`/`context` 置空，C session、`Box::into_raw` 的 `SessionContext` 与 worker **全部刻意泄漏且仍在运行**；但 `_view: NativeView` 仍是结构体字段 → 结构体 drop → `jr_view_destroy` → 异步块 `__bridge_transfer` + `removeFromSuperview` → **JRView 被 dealloc**。被放弃的 worker 从阻塞点恢复后仍会发射（`bridge.c` 的循环条件只在迭代顶部判定），`on_frame` 于是拿悬垂指针调 `jr_view_present_buffer`；该函数的逃逸 block 捕获 `__strong v`，`build.rs` 用 `-fobjc-arc` 编译 → block **copy 时** `objc_storeStrong` → 在 **worker 线程**上 `objc_retain(已释放)`。
+  > 审计第一轮曾写「block 不 retain」，第二轮已更正；**不得沿用旧表述**。
+- **三个入口**，任一都会触发：
+  1. 上面的 4s join 超时分支；
+  2. `RdpSessionManager` 无 `Drop` + 退出只关隧道 → managed state 析构时每个 `RdpSession` **不经 `shutdown`** 直接 drop；
+  3. **同 key 并发 `launch_session`** → `sessions.insert` 静默顶替并 drop 旧 session。`Background` 会话的视图从未挂载、没有 superview 持有，**结构体一 drop 立刻 dealloc，下一个循环 tick（≤33ms）就崩** —— 这条最像用户遇到的那种「用着用着突然没了」。
+- **修复**：
+  - **视图所有权转移给回调上下文**：`SessionContext.view` 改为持有 native view 的 `Arc`（`FrameTarget` 特征对象），`RdpSession.view` 也持一份。`Box::from_raw(context)` 只在 **join 成功**分支执行，所有泄漏路径都保留 Box → worker 能回调期间视图**不可能**被释放。正常路径引用计数 2→1→0，销毁时机与修复前完全一致。配套给 `NativeView` 补 `unsafe impl Sync`（`Arc<T>: Send` 要求 `T: Send + Sync`）。
+  - **`impl Drop for RdpSession` + `detach_fast()`**：覆盖入口 2/3。无阻塞、不碰主队列同步点（`Drop` 可能在管理器锁被持有时运行，`attach_input` 是 `dispatch_sync(main)`）；`jr_clipboard_sync_stop` 由 `clipboard_active` 守卫（否则后台会话析构会静默杀掉焦点会话的剪贴板同步，KI-040 回归）。worker 未结束时**刻意泄漏视图**，与 C session 同生命周期。
+  - **C 侧发射栅栏**：`disconnecting` 改为 `LONG` + 互锁；`jr_maybe_emit` 入口短路。被放弃的 worker 不再向已泄漏的视图持续整帧拷贝。**明确不做**：在 `jr_session_disconnect` 里把 `cb.on_frame_updated` 置空 —— 那两个相邻非原子字段被 worker 分两次读，ARM64 上会读出「旧函数指针 + 新 NULL user」而制造新崩溃。
+
+### B. 主线程永久死锁（= 审计 P1-11 / RC-05 / RDN-01）→ 卡死
+
+- **机制**：`RdpSessionManager::focus()`（同族还有 `launch_entry`/`hide_all`/`clear_exited`）**同时持有 `sessions` 与 `focused` 两把锁**，跨越 `refocus()` → `attach_input` → `jr_view_attach_input`，而后者是 `macos_view.m` 里的 **`dispatch_sync(main)`**。主线程同时跑**同步** Tauri 命令 `rdp_status`/`session_status`/`all_session_statuses`，它们要取同一把 `sessions` 锁 —— 而 `all_session_statuses` 被前端**每 1000ms** 轮询。互等 → 主线程永久冻结，无超时，只能强杀。
+- **修复**：
+  - 三个命令改为 `#[tauri::command(async)]`（非 async 函数加 `(async)` 走 tokio 线程，签名/返回类型/前端契约全不变）。主线程退出等待者角色后，环无法形成。
+  - `clear_exited` 把阻塞的 `shutdown()` 移出锁（原来在锁内跑 4s join + `dispatch_sync`）。
+  - `run()` 记录主线程 `ThreadId`，`focus`/`launch_entry`/`hide_all` 入口加 `debug_assert_ne!` —— 把「未来有人加一个同步命令就重新引入永久冻结」变成构建期失败。
+  - 同 key 并发启动加 RAII in-flight 声明，重复时返回既有 `RdpLaunchResult::AlreadyRunning`（同时消除入口 3）。
+
+### 验证（headless，无需 ASan）
+
+新增 `src-tauri/src/bin/session_lifecycle_probe.rs`：在进程主线程构造真实 `RdpSession`（无 Tauri 窗口），走完整 teardown，并用 `jr_view_live_count()` 断言视图生命周期。配套注入器 `JR_RDP_STALL_AFTER_DISCONNECT_MS` 让 4s 超时分支**确定性可复现**（该分支平时罕见）。
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| abandon 路径（注入 8s 卡顿） | 视图被释放（`views after drop = 0`），复现器判定 FAIL / 进程崩溃 | `[jr-flow] rdp worker join timeout` + `views = 1`，**exit 0** |
+| 正常路径（无注入） | 视图随结构体释放（正确） | `views after drop = 0`，exit 0（干净回收） |
+
+**阴性对照**：把上下文的视图持有退回裸指针（= 修复前的真实结构）后，同一复现器立刻判定 `views after drop = 0` 并 **exit 4** —— 证明该复现器确实能抓到本 bug，不是自证。配套单测覆盖 `may_reclaim` 门禁与并发启动拒绝。
+
+### 仍有意的泄漏（与设计一致，非遗漏）
+
+abandon 路径（4s 超时、退出、并发顶替）会刻意泄漏：worker 线程 + C `jr_session_t` + `SessionContext` + 它的 native view。理由与 KI-041 一致 —— 保 `shutdown` 有界返回优先于回收。视图此时已 `remove_from_window()` 离屏，因此不显示、不挡 UI。
+
+### 未修的同类项（另立任务）
+
+- **N-04**：剪贴板全局态（`g_clipSession` 等）+ 0.5s 定时器的第二个 UAF 窗口（`jr_clipboard_sync_stop` 无 session 参数）。
+- **N-15**：`s->gdi` 数据竞争（主线程鼠标事件的 `jr_session_get_size` vs worker 的 `gdi_free`）。
+- 审计第 6 条建议里的结构性锁重构（transition lock + UI 状态外移），本轮以命令异步化 + 断言约束替代。
+
+- **状态**：✅ 已修复并 headless 真机验证（2026-09-15，J501 `100.93.59.109`）。崩溃/死锁的**用户现场**复现仍建议在 0.3.10 上跟一轮。
+
+## KI-044 — 远程桌面里改 WiFi 报 "Not authorized to control networking"：polkit 不认 xrdp 远程会话（已修复，自愈）
+
+- **症状（2026-09-22 真机）**：在 App 的远程桌面里打开网络设置改 WiFi，弹 `Connection failure / Connection activation failed / (1) Not authorized to control networking.` 桌面本身完全正常，只有 NM 相关的操作被拒。
+- **根因（三层叠加）**：
+  1. Ubuntu 自带的 NM polkit 规则只对 `subject.local && subject.active && (sudo || netdev)` 放行；**xrdp 会话是 remote 会话，`subject.local == false`** → 规则从不匹配。
+  2. 于是回落到 NM policy 默认值：`enable-disable-network` 的 `allow_inactive=no` **直接拒绝**（就是那句报错的来源）；`settings.modify.system` 的 `allow_inactive=auth_admin_keep` 需要交互认证。
+  3. 会话里**没有任何 polkit agent**（未装 `policykit-1-gnome`/`xfce-polkit`，autostart 只有 xfce4-screensaver），所以连弹窗授权都走不到 → 一律失败。
+- **诊断要点**：设备 polkit `0.105-33`，`/usr/lib/polkit-1/` 下只有 `polkit-agent-helper-1`、`libpolkit` 无 mozjs 依赖 → **没有 JS 后端，`/usr/share/polkit-1/rules.d/*.rules` 在这里是死文件**，必须写 `.pkla`。真机 `pkcheck` 探针（远程会话下）：`enable-disable-network` → **rc=1**（未授权，实锤），`network-control` / `settings.modify.system` → rc=2。用户 `seeed` 在 `sudo` 组、不在 `netdev` 组。
+- **修复（自愈）**：
+  - `bootstrap.sh` 新增幂等步骤 `fix_nm_polkit`：写 `/etc/polkit-1/localauthority/50-local.d/47-nm-remote-session.pkla`（`50-local.d` 优先级高于 `10-vendor.d`，可覆盖 vendor 那几条只给 `ResultActive=yes` 的规则）。**三个 Result 全给**：`ResultAny`（SSH 等无会话）、`ResultInactive`（remote 会话，本次失败的分支）、`ResultActive`（本地桌面）。
+  - 身份写 `unix-user:$SESSION_USER;unix-group:netdev`：只按组授权不够——`adduser` 之后**当前进程的组列表不会刷新**，本次会话的 `pkcheck` 仍判失败，设备会永远进不了 ready；按用户授权立刻生效，组身份留给其它/后续用户。同时把用户加入 `netdev` 与 Ubuntu 惯例对齐。
+  - `check-environment.sh` 新增 `nm_polkit_ok` 事实（`pkcheck --process $$`）；Rust `classify` 将其纳入 `service_ok` → 缺失即 Broken → 走既有自愈装机。
+- **坑（真机才暴露）**：幂等判定的 `[ -f "$PKLA_FILE" ]` 必须走 `as_root` —— `/etc/polkit-1/localauthority/` 是 `drwx------ root`，非 root 穿不过父目录，`[ -f ]` 恒假，会让每次运行都白白重写一遍。
+- **状态**：⚠️ 设备端修复已落地并真机验证（2026-09-23，`192.168.2.20`）：`nm_polkit_ok` 由 `false` → `true`、幂等复跑通过。**会话内那条分支（`ResultInactive`）仍需在 xrdp 桌面里跑一次 `pkcheck` 确认**，SSH 里验的是 `ResultAny` 分支，验不到本次失败的那条。
+## KI-045 — 剪贴板双向全死：sesman `ListenAddress` 让 chansrv 改走 TCP，xrdp 永远握不上手（已修复，自愈）
+
+- **症状（2026-09-22 真机）**：远程桌面显示、键鼠、声音全部正常，唯独**剪贴板双向全死** —— Mac 复制的内容粘不进远端，远端复制的也带不出来。桌面毫无异常，剪贴板静默失效。
+- **根因（配置，一条因果链）**：xrdp 0.9.17 `sesman/chansrv/chansrv_config.c` 里 chansrv 的 `use_unix_socket` **只**由这一条推导，且默认 0：
+  ```c
+  #define DEFAULT_USE_UNIX_SOCKET 0
+  if (g_strcasecmp(name, "ListenAddress") == 0)
+      if (g_strcasecmp(value, "127.0.0.1") == 0)
+          cfg->use_unix_socket = 1;
+  ```
+  为 0 时 `setup_listen()` 走 `else` 分支，去监听 **TCP `7200 + display`**（本机 :10 → 7210）；而 xrdp 前端只会连 `/run/xrdp/sockdir/xrdp_chansrv_socket_<display>`（`strings /usr/sbin/xrdp` 里只有这个路径）。**两边永远对不上** →
+  `xrdp_mm_connect_chansrv: connect failed trying again...`（4 次 × 4s）→ `error in trans_connect chan` → 该连接此后再不重试通道服务 → chansrv 虽然活着，CLIPRDR/rdpdr/rdpsnd 全废。
+  本机 `sesman.ini` 被改成 `ListenAddress=0.0.0.0`（`dpkg -V xrdp` 正标记 `sesman.ini`/`xrdp.ini` 与包原始 MD5 不一致），诱因很可能是早先为「让 xrdp 监听所有网卡」而改（见 KI-006）。
+- **真机证据链**：chansrv 横幅 `UseUnixSocket (derived): false` 且 `ss -ltnp` 显示 `xrdp-chansrv` 监听 `*:7210`；改回 `127.0.0.1` 后横幅立刻变 `true`（同一条推导），`/var/log/xrdp.log` 从 `connect failed` 变为 **`xrdp_mm_connect_chansrv: chansrv connect successful`**，客户端日志随之首次出现 `server capabilities received` + `monitor-ready`。
+- **客户端侧证据（排除客户端）**：修复前每次连接都是 `jr_clip_wire` 成功 → `sending client capabilities` 发出 → 服务端 `ServerCapabilities`/`MonitorReady` **永不到达** → C 侧 `clip_ready` 恒为 0 → `jr_clip_announce` 直接 return。客户端这段逻辑本身正确。
+- **附带修掉的客户端 bug**：`macos_view.m` 的 `g_suppressNext` 是**会被 latch 住的一次性标志** —— `jr_mac_clip_set` 在同一主线程块里已把 `g_lastCount` 同步更新，于是下一 tick 在 `c == g_lastCount` 处提前 return、标志不被消费；此后 Mac 侧的**第一次真实复制会被静默吞掉**（恰好一次）。回声抑制本就是结构性的（`g_lastCount`/`g_lastText` 同步更新即足够），该标志纯属冗余，已移除。
+- **修复（自愈）**：
+  - `bootstrap.sh` 新增幂等步骤 `fix_sesman_listen`：把 `/etc/xrdp/sesman.ini` 的 `ListenAddress` 写成 `127.0.0.1`（键缺失时插入 `[Globals]`，因为**缺失同样使推导为 false**）。它同时把 `XRDP_RESTART_NEEDED` 置位，强制 `enable_service` 重启服务 —— 服务「已经 active」不代表跑的是新配置，chansrv 只在启动时读一次 sesman.ini。
+  - `check-environment.sh` 新增**静态可判**事实 `sesman_listen_local`；`classify` 将其纳入 `service_ok` → 命中即 Broken → 自动走 bootstrap 修好。**刻意不查运行期 chansrv 状态**：进程与监听 socket 只在活跃会话期间存在，而且 chansrv 接受连接后会主动删掉自己的监听 socket，查那个文件完全不可靠。
+  - `clear_stale_chansrv()`：任何服务重启前先 `pkill -x xrdp-chansrv` + 清残 socket。`xrdp.service` 带 `RuntimeDirectory=xrdp`，重启会整个重建 `/run/xrdp`，把存活 chansrv 的 socket 抹掉而它自身不会重建 —— 残留会让下一次登录继续失败。
+  - 客户端：C bridge 新增 `jr_session_clip_ready()`（暴露既有 `clip_ready`）→ `clip_ready_keyed()` → `launch_session` 在桌面可用后给 CLIPRDR 3s 宽限（健康时 MonitorReady 在连接握手期就到，**正常路径零额外延迟**），未就绪则落进既有修复路径重连一次，仅告警不阻断桌面。
+- **验证（2026-09-23 真机 `192.168.2.20`）**：先人为把 `ListenAddress` 改回 `0.0.0.0` 制造故障态（`check-environment.sh` 正确报 `sesman_listen_local: false`），再重启 App —— **App 全自动完成 探测→classify→bootstrap 改写→重启→重连**，`ListenAddress` 被自动改回 `127.0.0.1`，设备端出现 `chansrv connect successful`，客户端出现 `monitor-ready`。
+- **仍未闭环**：剪贴板**数据面**的最终确认。用 `python3-gi`(GTK) 在会话内直接读写 X 剪贴板做无头验证时，观察到服务端仍未 `FormatDataRequest`、chansrv 也未接管 X selection 所有权 —— 即通道虽已协商，数据流可能仍未打通。**需要一次真人复制/粘贴确认**（这是唯一可靠的判据）。若确认仍不通，下一步是取 chansrv 的 DEBUG 日志（`EnableSyslog=true` 但 `SyslogLevel` 默认 INFO，DEBUG 被挡；需临时把 `[ChansrvLogging] SyslogLevel=DEBUG`）再定位。
+- **状态**：⚠️ 通道层已修复并真机验证；数据面待真人确认。

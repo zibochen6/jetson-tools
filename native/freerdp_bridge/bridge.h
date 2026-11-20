@@ -111,6 +111,13 @@ int jr_session_set_size(jr_session_t* s, int width, int height);
 int jr_clip_store_text(jr_session_t* s, const char* utf8);
 void jr_clipboard_sync_start(void* session); /* poll Mac pasteboard -> remote */
 void jr_clipboard_sync_stop(void);
+/* CLIPRDR readiness (KI-045): non-zero once the server sent MonitorReady, i.e.
+ * xrdp actually reached its channel server. Until then `clip_ready` gates the
+ * whole handshake, so a value that never flips means xrdp-chansrv was
+ * unreachable (`xrdp_mm_connect_chansrv: connect failed`) and the clipboard
+ * stays dead in both directions for this connection. Polled from Rust after
+ * connect so a wedged chansrv can trigger a one-shot self-heal. */
+int jr_session_clip_ready(jr_session_t* s);
 const char* jr_last_error(jr_session_t* s);
 
 /* Diagnostics / test hooks. UTF-8 <-> UTF-16LE text codecs (text-only
@@ -119,9 +126,14 @@ const char* jr_last_error(jr_session_t* s);
 char* jr_utf16le_to_utf8(const uint8_t* utf16le, uint32_t len);
 uint8_t* jr_utf8_to_utf16le(const char* utf8, uint32_t* out_len);
 
-/* Native desktop view (implemented in macos_view.m). */
+/* Native desktop view. Implemented twice with the same symbol contract:
+ * `macos_view.m` (AppKit) and `linux_view.c` (GTK3). */
 void* jr_view_create(void);
 void jr_view_destroy(void* view);
+/* Diagnostic: number of `JRView`s currently alive. Used to verify that an
+ * abandoned worker keeps its view alive (KI-043) rather than having it freed
+ * underneath a live `on_frame`. */
+int jr_view_live_count(void);
 void jr_view_set_frame(void* view, double x, double y, double width, double height);
 void jr_view_add_to_window(void* view, void* ns_window);
 /* Like jr_view_add_to_window, but leaves `top_inset` points free at the top
@@ -131,13 +143,22 @@ void jr_view_remove_from_window(void* view);
 void jr_view_set_fill(void* view, uint8_t r, uint8_t g, uint8_t b);
 /* Attach a live session for input forwarding (NULL to detach; synchronous). */
 void jr_view_attach_input(void* view, void* session);
-/* Content-view size of an NSWindow in points (synchronous; 0 on failure). */
+/* Content size of the host window in points/dp (synchronous; 0 on failure).
+ * On Linux this is the GtkOverlay allocation inside Tauri's default_vbox. */
 void jr_window_content_size(void* ns_window, double* w, double* h);
-/* Height occupied by macOS titlebar/safe-area chrome inside the content view.
- * Multi-device native surfaces reserve this in addition to the web tab bar. */
+/* Height occupied by platform titlebar/safe-area chrome inside the content
+ * view (macOS only; Linux returns 0). */
 double jr_window_safe_area_top(void* ns_window);
 void jr_view_present_buffer(void* view, const uint8_t* buffer, int width, int height,
                             int stride, int dirty_x, int dirty_y, int dirty_w, int dirty_h);
+
+/* Linux-only bootstrap (linux_view.c). Called from Tauri `.setup()` on the GTK
+ * main thread. `window` is the GtkApplicationWindow, `vbox` the default_vbox;
+ * returns 0 on success after reparenting the WebKitWebView into a GtkOverlay.
+ * `jr_linux_surface_handle` returns that overlay (NULL before init), which is
+ * the opaque `ns_window` handle the Rust code passes to the view functions. */
+int jr_linux_init(void* window, void* vbox);
+void* jr_linux_surface_handle(void);
 
 /* Diagnostics */
 const char* jr_freerdp_version(void);

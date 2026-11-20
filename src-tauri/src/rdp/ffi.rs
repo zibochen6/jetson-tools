@@ -107,11 +107,15 @@ extern "C" {
     pub fn jr_session_enqueue_resize(s: *mut jr_session, w: c_int, h: c_int) -> c_int;
     pub fn jr_session_enqueue_reset_modifiers(s: *mut jr_session) -> c_int;
     pub fn jr_session_set_size(s: *mut jr_session, w: c_int, h: c_int) -> c_int;
+    /// Non-zero once the server sent CLIPRDR MonitorReady (KI-045).
+    pub fn jr_session_clip_ready(s: *mut jr_session) -> c_int;
     pub fn jr_last_error(s: *mut jr_session) -> *const c_char;
 
-    // Native desktop view (macos_view.m).
+    // Native desktop view (macos_view.m on macOS, linux_view.c on Linux).
     pub fn jr_view_create() -> *mut c_void;
     pub fn jr_view_destroy(view: *mut c_void);
+    /// Diagnostic: number of `JRView`s alive (KI-043 verification).
+    pub fn jr_view_live_count() -> c_int;
     pub fn jr_view_set_frame(view: *mut c_void, x: c_double, y: c_double, w: c_double, h: c_double);
     pub fn jr_view_add_to_window(view: *mut c_void, ns_window: *mut c_void);
     pub fn jr_view_add_to_window_inset(
@@ -137,4 +141,12 @@ extern "C" {
         dw: c_int,
         dh: c_int,
     );
+
+    // Linux-only GTK bootstrap (linux_view.c): reparents the WebKitWebView
+    // into a GtkOverlay inside Tauri's default_vbox. Must run on the GTK main
+    // thread (Tauri `.setup()`).
+    #[cfg(target_os = "linux")]
+    pub fn jr_linux_init(window: *mut c_void, vbox: *mut c_void) -> c_int;
+    #[cfg(target_os = "linux")]
+    pub fn jr_linux_surface_handle() -> *mut c_void;
 }

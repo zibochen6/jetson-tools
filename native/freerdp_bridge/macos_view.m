@@ -24,6 +24,9 @@ static void jr_cg_buffer_release(void* info, const void* data, size_t size)
 	free((void*)data);
 }
 
+/* Live `JRView` count — see `jr_view_create` / `jr_view_live_count`. */
+static _Atomic(int) g_view_live = 0;
+
 /* Apple virtual key code -> XT (PS/2 set 1) make code; `ext` = E0-prefixed. */
 static BOOL jr_scancode_for_vk(unsigned short vk, unsigned char* out, BOOL* ext);
 /* True when a keyCode is a TEXT key (letter/digit/punctuation/space/dead-key)
@@ -881,7 +884,17 @@ void* jr_view_create(void)
 		  v = [[JRView alloc] initWithFrame:NSMakeRect(0, 0, 640, 480)];
 		});
 	}
+	/* Diagnostic: number of live JRViews. A session whose worker outlives its
+	 * owner must keep its view alive on purpose (KI-043) — if this drops while
+	 * a worker is still presenting, the view was freed underneath it. */
+	if (v)
+		fprintf(stderr, "[jr-view] create live=%d\n", atomic_fetch_add(&g_view_live, 1) + 1);
 	return (__bridge_retained void*)v;
+}
+
+int jr_view_live_count(void)
+{
+	return atomic_load(&g_view_live);
 }
 
 void jr_view_destroy(void* handle)
@@ -895,6 +908,7 @@ void jr_view_destroy(void* handle)
 	   * off screen — the last presented frame would stay visible forever.
 	   * Detach explicitly so destroy always frees the screen. */
 	  [v removeFromSuperview];
+	  fprintf(stderr, "[jr-view] destroy live=%d\n", atomic_fetch_sub(&g_view_live, 1) - 1);
 	});
 }
 
@@ -1054,7 +1068,6 @@ static _Atomic(uint64_t) g_clip_generation = 0;
 
 static NSTimer* g_clipTimer = nil;
 static NSInteger g_lastCount = 0;
-static BOOL g_suppressNext = NO;
 static NSString* g_lastText = nil;
 
 int jr_clip_is_owner(void* session)
@@ -1082,7 +1095,6 @@ void jr_mac_clip_set(void* session, uint64_t generation, const char* utf8)
 		  return;
 	  }
 	  NSPasteboard* pb = [NSPasteboard generalPasteboard];
-	  g_suppressNext = YES;
 	  [pb clearContents];
 	  [pb setString:s forType:NSPasteboardTypeString];
 	  g_lastCount = pb.changeCount;
@@ -1104,11 +1116,6 @@ static void jr_clip_timer_tick(NSTimer* t)
 	if (c == g_lastCount)
 		return;
 	g_lastCount = c;
-	if (g_suppressNext)
-	{
-		g_suppressNext = NO;
-		return;
-	}
 	s = [pb stringForType:NSPasteboardTypeString];
 	if (!s)
 		return;
@@ -1130,7 +1137,12 @@ void jr_clipboard_sync_start(void* session)
 	  atomic_fetch_add(&g_clip_generation, 1); /* stale callbacks are invalidated */
 	  g_lastCount = [[NSPasteboard generalPasteboard] changeCount];
 	  g_lastText = nil;
-	  g_suppressNext = NO;
+	  /* Echo suppression is structural: jr_mac_clip_set updates g_lastCount in
+	   * the same main-thread block that writes the pasteboard, so the next tick
+	   * already sees an unchanged count and bails out. (A separate one-shot
+	   * `g_suppressNext` flag used to latch instead — the tick returned early on
+	   * the matching count without consuming it, so the NEXT genuine Mac copy
+	   * was swallowed. Removed, KI-045.) */
 	  /* Store the current pasteboard snapshot synchronously (thread-safe, no
 	   * handshake) so MonitorReady can offer it on connect without blocking
 	   * the worker on NSPasteboard. */

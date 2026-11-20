@@ -1,10 +1,14 @@
 fn main() {
     tauri_build::build();
 
+    // Target platform — `cfg!` describes the BUILD host and is wrong when
+    // cross-compiling; CARGO_CFG_TARGET_OS is always the target.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+
     // Locate FreeRDP + WinPR via pkg-config (dev: brew). `probe_library` also
     // emits the required link-search/-lib cargo directives.
     let freerdp3 = pkg_config::probe_library("freerdp3")
-        .expect("freerdp3 (brew freerdp) required for embedded desktop");
+        .expect("freerdp3 (brew freerdp on macOS / libfreerdp-dev on Linux) required");
     let client3 = pkg_config::probe_library("freerdp-client3").expect("freerdp-client3 required");
     let winpr3 = pkg_config::probe_library("winpr3").expect("winpr3 required");
 
@@ -23,12 +27,14 @@ fn main() {
     let queue_c = native.join("queue.c");
     let queue_h = native.join("queue.h");
     let macos_view_m = native.join("macos_view.m");
+    let linux_view_c = native.join("linux_view.c");
     // The headers aren't compiled inputs, so track their changes explicitly.
     println!("cargo:rerun-if-changed={}", bridge_h.display());
     println!("cargo:rerun-if-changed={}", bridge_c.display());
     println!("cargo:rerun-if-changed={}", queue_h.display());
     println!("cargo:rerun-if-changed={}", queue_c.display());
     println!("cargo:rerun-if-changed={}", macos_view_m.display());
+    println!("cargo:rerun-if-changed={}", linux_view_c.display());
 
     // C bridge (session protocol) — no ARC. The command queue is compiled into
     // the same static lib so it is both linked into the app and callable from
@@ -43,16 +49,38 @@ fn main() {
     }
     bridge.compile("freerdp_bridge_c");
 
-    // ObjC native view — ARC; AppKit on the main thread.
+    // Native desktop view — one implementation per platform, same C symbols.
     let mut view = cc::Build::new();
-    view.file(&macos_view_m);
-    view.flag("-fobjc-arc");
-    view.flag("-Wno-deprecated-declarations");
-    for inc in &includes {
-        view.include(inc);
+    view.flag("-Wno-unused-parameter");
+    if target_os == "macos" {
+        // ObjC native view — ARC; AppKit on the main thread.
+        view.file(&macos_view_m);
+        view.flag("-fobjc-arc");
+        view.flag("-Wno-deprecated-declarations");
+        for inc in &includes {
+            view.include(inc);
+        }
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
+    } else if target_os == "linux" {
+        // GTK3 + cairo view. pkg-config emits the link directives; only the
+        // include paths are needed for compiling.
+        let gtk = pkg_config::probe_library("gtk+-3.0")
+            .expect("gtk+-3.0 (libgtk-3-dev) required for the embedded desktop");
+        let cairo = pkg_config::probe_library("cairo").expect("cairo required for the GTK view");
+        for inc in gtk.include_paths.iter().chain(cairo.include_paths.iter()) {
+            view.include(inc);
+        }
+        for inc in &includes {
+            view.include(inc);
+        }
+        view.flag("-Wno-deprecated-declarations");
+        view.file(&linux_view_c);
+    } else {
+        // Other platforms have no embedded desktop view yet; the Rust side is
+        // gated the same way, so an empty static lib keeps the build valid.
+        println!("cargo:warning=no native desktop view for target_os={target_os}");
     }
-    println!("cargo:rustc-link-lib=framework=AppKit");
-    println!("cargo:rustc-link-lib=framework=CoreGraphics");
-    println!("cargo:rustc-link-lib=framework=QuartzCore");
     view.compile("freerdp_bridge_view");
 }

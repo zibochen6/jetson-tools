@@ -28,9 +28,34 @@ mod clipboard_ffi_tests;
 
 use tauri::Manager;
 
-/// Release builds launched from Finder/`open` have no terminal: stderr (all
-/// `[jr-flow]` diagnostics) would vanish. Redirect it to
-/// `~/Library/Logs/jetson-remote.log` so support can tail the flow
+/// Platform log directory for the redirected stderr:
+/// macOS `~/Library/Logs`, Linux `$XDG_STATE_HOME/jetson-remote`
+/// (fallback `~/.local/state/jetson-remote`).
+fn log_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").ok()?;
+        Some(std::path::PathBuf::from(home).join("Library/Logs"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(state) = std::env::var("XDG_STATE_HOME") {
+            if !state.is_empty() {
+                return Some(std::path::PathBuf::from(state).join("jetson-remote"));
+            }
+        }
+        let home = std::env::var("HOME").ok()?;
+        Some(std::path::PathBuf::from(home).join(".local/state/jetson-remote"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Release builds launched from Finder/`open` (or a Linux desktop launcher)
+/// have no terminal: stderr (all `[jr-flow]` diagnostics) would vanish.
+/// Redirect it to the platform log file so support can tail the flow
 /// (CONNECTION_REGRESSION_GUIDE §4.2). Dev (`cargo tauri dev`) keeps the tty.
 fn redirect_stderr_to_logfile() {
     use std::io::IsTerminal;
@@ -38,10 +63,9 @@ fn redirect_stderr_to_logfile() {
     if std::io::stderr().is_terminal() {
         return;
     }
-    let Ok(home) = std::env::var("HOME") else {
+    let Some(dir) = log_dir() else {
         return;
     };
-    let dir = std::path::PathBuf::from(home).join("Library/Logs");
     let _ = std::fs::create_dir_all(&dir);
     let Ok(f) = std::fs::OpenOptions::new()
         .append(true)
@@ -58,12 +82,53 @@ fn redirect_stderr_to_logfile() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     redirect_stderr_to_logfile();
+    // `run()` executes on the platform main thread (AppKit/GTK); the session
+    // manager's lock-order assertions depend on knowing which thread that is
+    // (P1-11).
+    rdp::session::record_main_thread();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(rdp::manager::RdpProcessManager::new())
         .manage(rdp::session::RdpSessionManager::new())
         .manage(remember::FileSecretStore)
         .manage(tunnel::TunnelManager::new())
+        .setup(|app| {
+            #[cfg(not(target_os = "linux"))]
+            let _ = app;
+            // Linux: reparent the WebKitWebView into a GtkOverlay on the GTK
+            // main thread so the embedded desktop can be stacked under the
+            // HTML tab bar. Failure is logged and surfaces as `launch_session`
+            // failing (no silent black window).
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::glib::translate::ToGlibPtr;
+                use tauri::Manager;
+                match app.get_webview_window("main") {
+                    Some(win) => {
+                        let window = win
+                            .gtk_window()
+                            .ok()
+                            .map(|w| w.to_glib_none().0.cast::<std::ffi::c_void>());
+                        let vbox = win
+                            .default_vbox()
+                            .ok()
+                            .map(|v| v.to_glib_none().0.cast::<std::ffi::c_void>());
+                        match (window, vbox) {
+                            (Some(window), Some(vbox)) => {
+                                if let Err(err) = rdp::linux_view::init(window, vbox) {
+                                    eprintln!("[jr-linux] embedded desktop init failed: {err}");
+                                }
+                            }
+                            _ => eprintln!(
+                                "[jr-linux] GTK window/vbox unavailable; embedded desktop disabled"
+                            ),
+                        }
+                    }
+                    None => eprintln!("[jr-linux] main window missing during setup"),
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info,
             commands::app::health_check,

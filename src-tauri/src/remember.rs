@@ -409,21 +409,45 @@ pub trait SecretStore: Send + Sync {
 pub struct FileSecretStore;
 
 impl FileSecretStore {
-    /// `~/Library/Application Support/<bundle id>/secrets.json` on macOS.
-    /// `JR_SECRETS_FILE` overrides the location (tests).
+    /// macOS: `~/Library/Application Support/<bundle id>/secrets.json`.
+    /// Linux: `$XDG_CONFIG_HOME/<bundle id>/secrets.json` (fallback
+    /// `~/.config/<bundle id>/secrets.json`), matching Tauri's
+    /// `app_config_dir`. `JR_SECRETS_FILE` overrides the location (tests).
     fn file_path() -> Result<PathBuf, RememberError> {
         if let Ok(p) = std::env::var("JR_SECRETS_FILE") {
             if !p.is_empty() {
                 return Ok(PathBuf::from(p));
             }
         }
-        let home = std::env::var_os("HOME")
-            .filter(|h| !h.is_empty())
-            .ok_or_else(|| RememberError::Secret("HOME is not set".into()))?;
-        Ok(PathBuf::from(home)
-            .join("Library/Application Support")
-            .join(APP_SUPPORT_DIR)
-            .join(SECRETS_FILE_NAME))
+        #[cfg(target_os = "macos")]
+        {
+            let home = std::env::var_os("HOME")
+                .filter(|h| !h.is_empty())
+                .ok_or_else(|| RememberError::Secret("HOME is not set".into()))?;
+            Ok(PathBuf::from(home)
+                .join("Library/Application Support")
+                .join(APP_SUPPORT_DIR)
+                .join(SECRETS_FILE_NAME))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(config) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+                return Ok(PathBuf::from(config)
+                    .join(APP_SUPPORT_DIR)
+                    .join(SECRETS_FILE_NAME));
+            }
+            let home = std::env::var_os("HOME")
+                .filter(|h| !h.is_empty())
+                .ok_or_else(|| RememberError::Secret("HOME is not set".into()))?;
+            Ok(PathBuf::from(home)
+                .join(".config")
+                .join(APP_SUPPORT_DIR)
+                .join(SECRETS_FILE_NAME))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err(RememberError::Secret("unsupported platform".into()))
+        }
     }
 
     fn load_map(

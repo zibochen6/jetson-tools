@@ -56,6 +56,22 @@ session_chown() {
   fi
 }
 
+# ---------- chansrv 生命周期清理（KI-045） ----------
+# xrdp.service 带 RuntimeDirectory=xrdp，`systemctl restart xrdp` 会整个重建 /run/xrdp，
+# 抹掉仍存活的 chansrv 的监听 socket（/run/xrdp/sockdir/xrdp_chansrv_socket_%d）。
+# chansrv 只在启动时创建该 socket、不会自愈 → xrdp 此后每次登录都
+# "xrdp_mm_connect_chansrv: connect failed trying again..." 然后放弃通道服务，
+# CLIPRDR 永不协商，剪贴板双向全死（重连也救不回来）。
+# 因此：任何重启之前，先杀 chansrv 再清残 socket，让新会话拿到干净的 socket。
+clear_stale_chansrv() {
+  as_root pkill -x xrdp-chansrv 2>/dev/null || true
+  as_root rm -f /run/xrdp/sockdir/xrdp_chansrv_socket_* 2>/dev/null || true
+}
+
+# 置 true 的步骤表示改了 xrdp/sesman 的配置，enable_service 必须重启服务让它们生效
+# （服务「已经 active」不等于「跑的是新配置」，chansrv 只在启动时读一次 sesman.ini）。
+XRDP_RESTART_NEEDED="false"
+
 log "phase=start user=$SESSION_USER root=$([ "$(id -u)" -eq 0 ] && echo yes || echo no)"
 
 # ---------- 1. 发行版识别（决定包名分支） ----------
@@ -185,6 +201,95 @@ else
 fi
 log "step=fix_lo_ipv6 status=done"
 
+# ---------- 3e. 自愈：远程会话下的 NetworkManager 授权（KI-044） ----------
+# Ubuntu 自带的 NM polkit 规则要求 subject.local && subject.active，而 xrdp 会话是
+# remote 会话（subject.local == false），规则不匹配 → 落到 NM policy 默认值：
+#   enable-disable-network : allow_inactive=no         → 直接拒绝
+#   settings.modify.system : allow_inactive=auth_admin → 需交互认证，会话内无 polkit agent
+# 结果：远程桌面里改 WiFi 报 "Connection activation failed: (1) Not authorized to
+# control networking."。设备 polkit 为 0.105（只有 localauthority 后端，
+# /usr/share/polkit-1/rules.d/ 下的 JS 规则在这里是死文件），故必须写 .pkla；
+# 50-local.d 优先级高于 10-vendor.d，可覆盖 vendor 那三条只给 ResultActive=yes 的规则。
+# 三个 Result 都要给：ResultAny=无会话（SSH）、ResultInactive=remote 会话（xrdp，
+# 本次失败的那条分支）、ResultActive=本地桌面。
+log "step=fix_nm_polkit status=start"
+NM_PKLA_FILE="/etc/polkit-1/localauthority/50-local.d/47-nm-remote-session.pkla"
+# 存在性判定必须走 as_root：/etc/polkit-1/localauthority/ 是 drwx------ root，
+# 非 root 的 [ -f ] 永远为假（父目录不可穿过），会让每次运行都白白重写一遍。
+if as_root grep -q 'enable-disable-network' "$NM_PKLA_FILE" 2>/dev/null; then
+  log "  $NM_PKLA_FILE already present"
+else
+  NM_PKLA_TMP="$(mktemp)"
+  # 未加引号的 heredoc：Identity 需要展开 $SESSION_USER。
+  # 身份同时给「用户」和「netdev 组」：本进程组列表在 adduser 之后不会刷新（会话启动时
+  # 就已固化），只按组授权会让本次会话的 pkcheck 仍判失败 → 设备永远进不了 ready；
+  # 按用户授权则立刻就生效，组身份是给其它/后续用户留的。
+  cat > "$NM_PKLA_TMP" << PKLAEOF
+[NetworkManager control from remote (xrdp) sessions - Jetson Remote KI-044]
+Identity=unix-user:$SESSION_USER;unix-group:netdev
+Action=org.freedesktop.NetworkManager.enable-disable-network;org.freedesktop.NetworkManager.enable-disable-wifi;org.freedesktop.NetworkManager.network-control;org.freedesktop.NetworkManager.settings.modify.system;org.freedesktop.NetworkManager.wifi.scan
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes
+PKLAEOF
+  # 用 install 落盘而非 `as_root cat >`：as_root 的 sudo -S 分支把 stdin 让给了密码，
+  # heredoc 直连会与之抢 stdin。
+  if as_root install -o root -g root -m 0644 "$NM_PKLA_TMP" "$NM_PKLA_FILE"; then
+    log "  wrote $NM_PKLA_FILE"
+  else
+    rm -f "$NM_PKLA_TMP"
+    log "step=error nm_polkit_write_failed"
+    exit 6
+  fi
+  rm -f "$NM_PKLA_TMP"
+fi
+# 组成员与 Ubuntu 惯例对齐（系统设置面板 / nm-applet 也依赖 netdev 组）
+if id -nG "$SESSION_USER" 2>/dev/null | tr ' ' '\n' | grep -qx 'netdev'; then
+  log "  $SESSION_USER already in netdev"
+else
+  if as_root adduser "$SESSION_USER" netdev >/dev/null 2>&1; then
+    log "  added $SESSION_USER to netdev"
+  else
+    log "step=error nm_netdev_group_failed"
+    exit 7
+  fi
+fi
+log "step=fix_nm_polkit status=done"
+
+# ---------- 3f. 自愈：sesman 必须监听 127.0.0.1，否则剪贴板必死（KI-045） ----------
+# xrdp 0.9.17 chansrv_config.c 里 use_unix_socket **只**由这一条推导：
+#     if (name == "ListenAddress" && value == "127.0.0.1") cfg->use_unix_socket = 1;
+# （默认 0；键不存在也保持 0。）它为 0 时 chansrv 的 setup_listen() 会去监听
+# TCP `7200 + display`（本机即 7210），而 xrdp 前端只会连
+# /run/xrdp/sockdir/xrdp_chansrv_socket_<display> —— 两边永远握不上手：
+#   xrdp_mm_connect_chansrv: connect failed trying again... → error in trans_connect chan
+# → 通道服务被永久放弃 → CLIPRDR 永不协商 → **剪贴板双向全死**，且重连也救不回来。
+# 常见诱因：为了「让 xrdp 监听所有网卡」把 ListenAddress 改成 0.0.0.0（见 KI-006）。
+# 注意：sesman 本身只服务本机 xrdp，绑 127.0.0.1 本来就是更安全的取值。
+log "step=fix_sesman_listen status=start"
+SESMAN_INI="/etc/xrdp/sesman.ini"
+if as_root grep -qE '^[[:space:]]*ListenAddress[[:space:]]*=[[:space:]]*127\.0\.0\.1[[:space:]]*$' "$SESMAN_INI" 2>/dev/null; then
+  log "  sesman ListenAddress already 127.0.0.1"
+elif as_root grep -qE '^[[:space:]]*ListenAddress[[:space:]]*=' "$SESMAN_INI" 2>/dev/null; then
+  if as_root sed -i 's|^[[:space:]]*ListenAddress[[:space:]]*=.*|ListenAddress=127.0.0.1|' "$SESMAN_INI"; then
+    XRDP_RESTART_NEEDED="true"
+    log "  rewrote ListenAddress -> 127.0.0.1 (chansrv will use the unix socket)"
+  else
+    log "step=error sesman_listen_write_failed"
+    exit 8
+  fi
+else
+  # 键缺失时 chansrv 的推导同样为 false，必须显式写进 [Globals]
+  if as_root sed -i '/^\[Globals\]/a ListenAddress=127.0.0.1' "$SESMAN_INI"; then
+    XRDP_RESTART_NEEDED="true"
+    log "  inserted ListenAddress=127.0.0.1 into [Globals]"
+  else
+    log "step=error sesman_listen_insert_failed"
+    exit 8
+  fi
+fi
+log "step=fix_sesman_listen status=done"
+
 # ---------- 4. 禁用 Wayland（仅当存在 gdm3；headless 无 gdm 时跳过） ----------
 if [ -f /etc/gdm3/custom.conf ]; then
   log "step=disable_wayland status=start"
@@ -210,11 +315,17 @@ if ! id -nG xrdp 2>/dev/null | tr ' ' '\n' | grep -qx 'ssl-cert'; then
   log "  added xrdp to ssl-cert (TLS key access)"
 fi
 if [ "$XRDP_GROUP_CHANGED" = "true" ]; then
+  clear_stale_chansrv
   as_root systemctl restart xrdp-sesman xrdp
   log "  xrdp-sesman + xrdp restarted after group update"
+elif [ "$XRDP_RESTART_NEEDED" = "true" ]; then
+  clear_stale_chansrv
+  as_root systemctl restart xrdp-sesman xrdp
+  log "  xrdp-sesman + xrdp restarted after config update"
 elif systemctl is-active --quiet xrdp && systemctl is-active --quiet xrdp-sesman; then
   log "  xrdp-sesman + xrdp already active"
 else
+  clear_stale_chansrv
   as_root systemctl restart xrdp-sesman xrdp
   log "  xrdp-sesman + xrdp started"
 fi

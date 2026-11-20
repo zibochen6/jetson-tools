@@ -18,6 +18,13 @@ pub struct NativeView {
 // SAFETY: all `jr_view_*` calls below dispatch to the AppKit main thread
 // internally, so the handle is thread-safe to store and call from any thread.
 unsafe impl Send for NativeView {}
+// SAFETY: required for `Arc<NativeView>` to be genuinely shareable across the
+// FreeRDP worker, the tokio command threads and the AppKit main thread — an
+// `Arc<T>` is only `Send` when `T: Send + Sync`. Every method takes `&self`,
+// `raw()` is a plain pointer read, and every other call marshals to the main
+// queue inside the `.m` layer, so a shared `&NativeView` exposes no interior
+// mutability that a second thread could race on.
+unsafe impl Sync for NativeView {}
 
 impl NativeView {
     pub fn create() -> Self {

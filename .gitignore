@@ -1,1 +1,28 @@
+# Build artifacts
+node_modules/
+dist/
+src-tauri/target/
+out/
+
+# Per-tool / local working state (never published)
+.trellis/
+.claude/
+.codex/
+.cursor/
+.agents/
+.pi/
+.dsh/
+.agent-teams/
+.ui-wireframes/
 .pi-loop.json.lock
+.vscode/
+.DS_Store
+
+# Local environment / secrets
+.env
+.env.*
+*.pem
+*.p12
+*.cer
+*.key
+*.mobileprovision

@@ -5,7 +5,23 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri/target"] },
+  {
+    ignores: [
+      "dist",
+      "node_modules",
+      "src-tauri/target",
+      // Local agent/tool state — never part of the app or the public repo.
+      ".pi",
+      ".trellis",
+      ".claude",
+      ".codex",
+      ".cursor",
+      ".agents",
+      ".dsh",
+      ".agent-teams",
+      ".ui-wireframes",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

@@ -16,12 +16,16 @@
 #include <freerdp/codec/color.h>
 #include <freerdp/event.h>
 #include <freerdp/channels/channels.h>
+#include <freerdp/channels/rdpgfx.h>
 #include <freerdp/client/cliprdr.h>
+#include <freerdp/client/cmdline.h>
 #include <winpr/collections.h>
 
 #include <winpr/wtypes.h>
 #include <winpr/crt.h>
 #include <winpr/synch.h>
+#include <winpr/interlocked.h>
+#include <winpr/sysinfo.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -82,9 +86,26 @@ struct jr_session
 	int height;
 	int color_depth;
 
-	volatile int disconnecting;
+	/* Set by jr_session_disconnect from another thread. Read by the event loop
+	 * and by jr_maybe_emit, so it must be interlocked: the emit guard is the
+	 * difference between a teardown that stops presenting and one that keeps
+	 * pushing frames at an abandoned session (KI-043). */
+	volatile LONG disconnecting;
 	int started;
 	int frame_count;
+	/* Presentation pacing (KI-042/N-03): `dirty` is raised by Update.EndPaint,
+	 * `present_count`/`last_present_ms` bound how often a full frame may be
+	 * copied out. All three are touched only from the worker thread (the
+	 * FreeRDP event loop owns EndPaint), so the interlocked ops are belt and
+	 * braces rather than a real contention path. */
+	volatile LONG dirty;
+	ULONGLONG last_present_ms;
+	int present_count;
+	/* Set when the RDPGFX dynamic channel connects. Diagnostic only: xrdp 0.9.x
+	 * (both our target devices) has no EGFX module at all, so this stays 0
+	 * there. Kept so a future GFX-capable server is observable, and so the
+	 * 33ms tick's GFX safety net has a condition to test. */
+	int gfx_connected;
 
 	/* Single-owner command queue (KI-018 / §12): AppKit main thread only
 	 * ENQUEUES; the RDP worker thread drains and calls the FreeRDP APIs. */
@@ -122,6 +143,11 @@ const char* jr_freerdp_version(void)
 const char* jr_last_error(jr_session_t* s)
 {
 	return s ? s->last_error : "";
+}
+
+int jr_session_clip_ready(jr_session_t* s)
+{
+	return s ? s->clip_ready : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -366,12 +392,58 @@ static BOOL jr_begin_paint(rdpContext* context)
 
 static void jr_emit_frame(jr_session_t* s, rdpGdi* gdi);
 
+/* Present at most once per JR_MIN_PRESENT_MS, and only when the screen
+ * actually changed. The server coalesces damage on a 40ms tick and xrdp's
+ * capture path caps at 25 fps, so a higher client-side rate buys nothing. */
+#define JR_MIN_PRESENT_MS 33
+/* A server that never calls Update.EndPaint (the GFX pipeline writes the
+ * primary buffer directly, KI-013) must still be refreshed, and any desktop
+ * should get a slow heartbeat so a missed EndPaint can never freeze the view. */
+#define JR_STALE_PRESENT_MS 500
+
+static void jr_maybe_emit(jr_session_t* s, rdpGdi* gdi)
+{
+	ULONGLONG now;
+	LONG dirty;
+
+	if (!s || !gdi || !gdi->primary)
+		return;
+	/* Never present once teardown has been requested. The loop only checks
+	 * `disconnecting` at the top of an iteration, so a worker that resumes
+	 * from a long block would otherwise emit one more frame — and after a
+	 * join-timeout abandon that frame lands on a session the owner is
+	 * deliberately leaking (KI-043). Guarding here covers every emit site,
+	 * present and future. */
+	if (InterlockedCompareExchange(&s->disconnecting, 0, 0) != 0)
+		return;
+
+	now = GetTickCount64();
+	if (now - s->last_present_ms < JR_MIN_PRESENT_MS)
+		return;
+
+	dirty = InterlockedExchange(&s->dirty, 0);
+	/* Nothing drawn, not GFX-driven, and the heartbeat is not due: skip the
+	 * whole full-frame malloc+memcpy+dispatch. */
+	if (!dirty && !s->gfx_connected && s->present_count > 0 &&
+	    (now - s->last_present_ms) < JR_STALE_PRESENT_MS)
+		return;
+
+	s->last_present_ms = now;
+	s->present_count++;
+	jr_emit_frame(s, gdi);
+}
+
 static BOOL jr_end_paint(rdpContext* context)
 {
 	jr_session_t* s = ((jr_context_t*)context)->session;
-	rdpGdi* gdi = context->gdi;
 
-	jr_emit_frame(s, gdi);
+	/* Content changed. Record it; the event loop decides when to copy the
+	 * frame out (see jr_maybe_emit). Emitting here directly — or once per
+	 * decoded PDU batch, which is what the loop used to do — cost a
+	 * full-frame malloc+memcpy+dispatch per batch. Once RemoteFX was enabled
+	 * that became ~1000/s (~3.8 GB/s of memcpy) on the very worker thread
+	 * doing the decoding, which starved itself down to 6 fps (KI-042/N-03). */
+	InterlockedExchange(&s->dirty, 1);
 	return TRUE;
 }
 
@@ -605,6 +677,33 @@ void jr_session_destroy(jr_session_t* s)
 	free(s);
 }
 
+/* One line per connection, proving what the client actually negotiated.
+ *
+ * This exists because the codec-negotiation defect (KI-042) was invisible for
+ * the entire life of the embedded engine: the client silently advertised zero
+ * bitmap codecs and nothing anywhere said so. Read this line before believing
+ * any frame-rate number. rfx=1 with gfxDvc=0 is the expected shape against
+ * xrdp 0.9.x (RFX over the legacy surface-commands path; no EGFX exists on
+ * that server at all). */
+static void jr_log_negotiation(jr_session_t* s)
+{
+	rdpSettings* st = s->context->settings;
+
+	fprintf(stderr,
+	        "[jr-nego] connType=%u rfx=%d rfxId=%u jpeg=%d jpegId=%u ns=%d nsId=%u "
+	        "gfx=%d gfxDvc=%d mfrs=%u\n",
+	        freerdp_settings_get_uint32(st, FreeRDP_ConnectionType),
+	        freerdp_settings_get_bool(st, FreeRDP_RemoteFxCodec) ? 1 : 0,
+	        freerdp_settings_get_uint32(st, FreeRDP_RemoteFxCodecId),
+	        freerdp_settings_get_bool(st, FreeRDP_JpegCodec) ? 1 : 0,
+	        freerdp_settings_get_uint32(st, FreeRDP_JpegCodecId),
+	        freerdp_settings_get_bool(st, FreeRDP_NSCodec) ? 1 : 0,
+	        freerdp_settings_get_uint32(st, FreeRDP_NSCodecId),
+	        freerdp_settings_get_bool(st, FreeRDP_SupportGraphicsPipeline) ? 1 : 0,
+	        s->gfx_connected,
+	        freerdp_settings_get_uint32(st, FreeRDP_MultifragMaxRequestSize));
+}
+
 static int jr_run_loop(jr_session_t* s)
 {
 	freerdp* instance = s->instance;
@@ -622,8 +721,10 @@ static int jr_run_loop(jr_session_t* s)
 		freerdp_disconnect(instance);
 		return -1;
 	}
+	jr_log_negotiation(s);
 
-	while (!freerdp_shall_disconnect_context(context) && !s->disconnecting)
+	while (!freerdp_shall_disconnect_context(context) &&
+	       InterlockedCompareExchange(&s->disconnecting, 0, 0) == 0)
 	{
 		/* Manual-reset wake: clear BEFORE draining so an enqueue that lands
 		 * during the drain re-signals the event and the next iteration wakes
@@ -650,7 +751,7 @@ static int jr_run_loop(jr_session_t* s)
 		status = WaitForMultipleObjects(nCount + 1, handles, FALSE, 33);
 		if (status == WAIT_TIMEOUT)
 		{
-			jr_emit_frame(s, context->gdi);
+			jr_maybe_emit(s, context->gdi);
 			continue;
 		}
 		if (status == WAIT_FAILED)
@@ -668,7 +769,33 @@ static int jr_run_loop(jr_session_t* s)
 				jr_set_error(s, "failed to check event handles");
 			break;
 		}
-		jr_emit_frame(s, context->gdi);
+		/* DEV-only wedge injector. When JR_RDP_STALL_AFTER_DISCONNECT_MS is
+		 * set, every loop iteration spends that long in the body, so the worker
+		 * is essentially always mid-iteration and a disconnect is guaranteed to
+		 * land while it is there — which drives the Rust side's 4s bounded join
+		 * into its abandon branch on demand. That branch is otherwise rare and
+		 * unreproducible, and it is the one that used to free the view under a
+		 * live worker (KI-043). Trade-off: frame delivery nearly stops, so this
+		 * is a teardown fixture, not a throughput one. Unset in production.
+		 *
+		 * Note it cannot be gated on `disconnecting`: the loop condition is
+		 * checked at the top, so once teardown is requested the body is never
+		 * entered again and a disconnect-gated stall would be unreachable. */
+		{
+			static LONG stall_ms = -1;
+			if (stall_ms < 0)
+			{
+				const char* v = getenv("JR_RDP_STALL_AFTER_DISCONNECT_MS");
+				stall_ms = v ? (LONG)atol(v) : 0;
+			}
+			if (stall_ms > 0)
+				Sleep((DWORD)stall_ms);
+		}
+		/* Rate-limited and change-gated — NOT one emit per decoded PDU batch.
+		 * RemoteFX delivers on the order of 1000 PDUs/s here; emitting per
+		 * batch meant ~1000 full-frame malloc+memcpy+dispatches per second on
+		 * the same thread that has to decode them (KI-042/N-03). */
+		jr_maybe_emit(s, context->gdi);
 	}
 
 	freerdp_disconnect(instance);
@@ -699,6 +826,50 @@ int jr_session_connect(jr_session_t* s)
 	 * stall `freerdp_client_start` indefinitely (stuck-session bug). */
 	freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout, 10000);
 
+	/* Codec negotiation — DO NOT REMOVE. Two independent conditions, both
+	 * required, and each one silently degrades the desktop to ~1.7 fps when
+	 * missed (KI-042). Verified against FreeRDP 3.31.0 and xrdp 0.9.24 source.
+	 *
+	 * (1) ConnectionType must be CONNECTION_TYPE_LAN (0x06) — exactly.
+	 *     xrdp only builds its encoder when that field says LAN:
+	 *       xrdp/xrdp_encoder.c:60  if (client_info->mcs_connection_type
+	 *                                    != CONNECTION_TYPE_LAN) return 0;
+	 *     with the value read straight out of the client info PDU at
+	 *       libxrdp/xrdp_sec.c:2126.
+	 *     The FreeRDP library default is CONNECTION_TYPE_AUTODETECT (0x07),
+	 *     and so is xfreerdp's — which is why even the plain `sdl-freerdp`
+	 *     command in the README runs without an encoder. AUTODETECT is NOT
+	 *     good enough here; it must be LAN.
+	 *
+	 * (2) The codecs must be enabled explicitly. The library leaves every
+	 *     bitmap codec FALSE (settings.c never assigns RemoteFxCodec/NSCodec/
+	 *     JpegCodec — they stay calloc-zero — and SupportGraphicsPipeline is
+	 *     derived from ServerMode, so clients get FALSE). And the LAN arm of
+	 *     freerdp_set_connection_type() does NOT enable them either — only the
+	 *     AUTODETECT arm does. So we set them by hand.
+	 *
+	 * With both in place the client advertises the RemoteFX GUID, xrdp parses
+	 * it (`xrdp_caps_process_codecs: RemoteFX, codec id N`), xrdp_encoder_create
+	 * succeeds with capture_code = 2, and xorgxrdp switches from the legacy
+	 * bitmap path to the RemoteFX capture path. Confirm on the device with
+	 * `grep 'got RFX capture' ~/.xorgxrdp.<display>.log`.
+	 *
+	 * The six desktop-chrome overrides below sit on top of the LAN perf-flag
+	 * set so the outcome does not depend on call order. */
+	if (!freerdp_set_connection_type(settings, CONNECTION_TYPE_LAN))
+	{
+		jr_set_error(s, "connection type lan failed");
+		return -1;
+	}
+	freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE); /* xorgxrdp capture_code==2 */
+	freerdp_settings_set_bool(settings, FreeRDP_JpegCodec, TRUE);     /* xrdp 0.9 is --enable-jpeg */
+	freerdp_settings_set_bool(settings, FreeRDP_DisableWallpaper, TRUE);
+	freerdp_settings_set_bool(settings, FreeRDP_AllowFontSmoothing, FALSE);
+	freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, FALSE);
+	freerdp_settings_set_bool(settings, FreeRDP_DisableFullWindowDrag, TRUE);
+	freerdp_settings_set_bool(settings, FreeRDP_DisableMenuAnims, TRUE);
+	freerdp_settings_set_bool(settings, FreeRDP_DisableThemes, TRUE);
+
 	if (freerdp_client_start(s->context) < 0)
 	{
 		jr_set_error(s, "client start failed");
@@ -717,7 +888,7 @@ int jr_session_disconnect(jr_session_t* s)
 {
 	if (!s)
 		return -1;
-	s->disconnecting = 1;
+	InterlockedExchange(&s->disconnecting, 1);
 	if (s->context)
 		freerdp_abort_connect_context(s->context);
 	/* Wake the event loop immediately so it observes `disconnecting`
@@ -1288,6 +1459,12 @@ static void jr_on_channel_connected(void* context, const ChannelConnectedEventAr
 		return;
 	fprintf(stderr, "[jr-clip] channel connected: %s (iface=%p s=%p sclip=%p)\n",
 	        e->name ? e->name : "(null)", e->pInterface, (void*)s, (void*)s->cliprdr);
+	/* RDPGFX is a DYNAMIC channel, so this PubSub event is the only reliable
+	 * way to observe it — freerdp_channels_get_static_channel_interface()
+	 * takes static names and returns NULL for rdpgfx no matter what. Must run
+	 * before the cliprdr early-return below. */
+	if (e->name && strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
+		s->gfx_connected = 1;
 	if (!e->name || strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) != 0)
 		return;
 	if (s->cliprdr)

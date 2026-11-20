@@ -32,7 +32,7 @@
 | 设备会话环境 | xfwm4 冻结、屏保挡窗、D-Bus 私总线、合成器 |
 | 嵌入式 FreeRDP | 通道接口时序竞争、PubSub 回调 cast、capabilities 握手 |
 | 输入转发 | **RDP 指针编码语义**（本仓库最大事故源） |
-| 渲染 | RDPGFX 接线（黑屏根因之一）、分辨率与 letterbox |
+| 渲染 | 图形管线接线（防御性）、**编码协商（LAN + codec，KI-042）**、分辨率与 letterbox |
 
 ---
 
@@ -74,11 +74,25 @@ xrdp 对 `TS_POINTER_EVENT` 的解析（v0.9.17 `xrdp/xrdp_wm.c::xrdp_wm_process
 
 - **分辨率 = 会话级**：会话分辨率在 xrdp 登录时确定（`session.rs desktop_size_for`），改窗口大小不会自动调；同用户重连会**复用旧会话**，改几何/`.xsession` 必须杀旧会话重建（`pkill -f '^/usr/lib/xorg/Xorg :10'`，**必须带锚点**，否则自杀——顺手杀掉包含同样字符串的自身 ssh 脚本）。
 - **in-app 环回隧道（KI-021）**：macOS TCC 拦未签名二进制的 LAN 直连（KI-004）。0.2.1 起后端用系统 `/usr/bin/ssh` 自建隧道，SSH/RDP 双平面一律走 127.0.0.1；本地端口优先 2222/3389（信任库按 wire host:port 计，端口稳定）。dev 仅可用编译期 `VITE_JR_SSH_PORT` 复用外部隧道；改 `tunnel.rs` / `tauriService.ts` 路由逻辑重看 KI-004/KI-021。**⚠️ macOS 15+/27 起，本地网络 TCC 按 responsible process 把子进程 `/usr/bin/ssh` 的 LAN 连接归属回 App：App 未正式签名（无 Team ID）时该隧道 LAN 腿照样被拒（"no application ID" → "No route to host"），绕过失效（KI-039）；正式签名后恢复。签名相关见 `tauri.conf.json` 的 `bundle.macOS`（signingIdentity/entitlements/hardenedRuntime）与 KI-039 维护纪律。**
-- **RDPGFX 接线**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 是黑屏根因（KI-013）——通道接线逻辑动它前必须理解。
+- **图形管线接线（防御性）**：`pre_connect` 里的 `PubSub_SubscribeChannelConnected` 订阅 `freerdp_client_OnChannelConnectedEventHandler` 会调用 `gdi_graphics_pipeline_init()`，接线 RDPGFX DVC 与 legacy Surface Commands 两条路径（KI-013）。**xrdp 0.9.x 无 EGFX、不协商 RDPGFX**，故对本项目设备它不参与实际帧路径，但必须保留（对 Windows / xrdp ≥ 0.10.2 是唯一保护，且与 FreeRDP 参考客户端一致）。通道接线逻辑动它前必须理解。
+- **编码协商（KI-042，2026-09-15）**：`jr_session_connect` 里的
+  ```c
+  freerdp_set_connection_type(settings, CONNECTION_TYPE_LAN);
+  freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_JpegCodec, TRUE);
+  ```
+  **三个条件缺一即静默退化到 legacy bitmap 路径**（摄影类内容 1280×724 时约 1.7 fps，表现为「一帧一帧浮现」）：① 连接类型必须是 `CONNECTION_TYPE_LAN`，**不能用 AUTODETECT**——`xrdp/xrdp_encoder.c:60` 要求 `mcs_connection_type == CONNECTION_TYPE_LAN` 才创建编码器；② ③ 库 API 默认把每个 bitmap codec 都留成 FALSE，且 LAN 分支不会替我们打开，必须显式设。
+  动这段前必读 `EMBEDDED_RDP.md` §7.1；改完必须验证两处：客户端 `grep '\[jr-nego\]'` 出现且 `connType=6 rfx=1`，**服务端** `grep 'got RFX capture' ~/.xorgxrdp.<display>.log` 命中。只看客户端等于没验证。
+- **呈现节流（KI-042/N-03）**：事件循环**不得**在每条解码 PDU 批次后发射整帧。RFX 生效后 PDU 速率可达 ~1000/s，逐批发射会变成 ~1000 次/秒的整帧 `malloc`+`memcpy`+`dispatch`（≈3.8 GB/s），饿死同一个 worker 线程上的解码。必须走 `jr_maybe_emit()`：33ms 限速 + `EndPaint` 置脏才发射，并保留「GFX 已连 / 500ms 心跳」安全网（后者防的是「画面冻结」这一类回归）。
 - **杀会话用锚定模式**：`pkill -f "^/usr/lib/xorg/Xorg :10"`；裸 `pkill -f "Xorg :10"` 会匹配自身 ssh 命令行自杀。
 - **修饰键状态同步（KI-023）**：Cmd（→Super，0x5B/0x5C, E0）的 `flagsChanged` 松开事件可能被 macOS 系统快捷键路径吞掉（Cmd+Tab 切应用、Cmd+Q 退出、Cmd+空格 Spotlight），远端 Xorg 会永远认为 Super 按住；xrdp 常驻 X 会话跨重连保留卡键态，于是「一连上就复现」：**e → 打开 Thunar（Super+E）、空格 → 被输入法切换快捷键吃掉**。改 `macos_view.m` 的 `flagsChanged`/焦点处理或 `bridge.c` 的键盘发送前必读本条目：连接建立（PostConnect）、输入 attach（含 Tab refocus）、窗口/应用焦点变化必须调用 `jr_session_reset_keyboard_modifiers`（释放全部修饰键，幂等），且不得在焦点恢复时反向补发「仍按住」的修饰键（AppKit 无 L/R 区分，补发可能制造新的卡键）。
 - **CLIPRDR 接线/宣告与焦点解耦（KI-040，2026-09-08）**：剪贴板通道握手每個会话独立完成——`jr_clip_monitor_ready` 必须无条件 `jr_clip_announce`（含 ClientFormatList），后台启动的会话也不例外；`jr_clipboard_sync_start`（焦点迁移）在存储快照后必须**入队一次**宣告，保证切 Tab 后立即可粘贴。焦点只决定「谁有权读写 Mac 剪贴板」（generation guard，KI-028），不得主宰会话的剪贴板通道能否建立。
-- **teardown/join 必须有上界（KI-041，2026-09-08）**：任何线程 `join()` 都不许无界等另一个线程自查退出——FreeRDP worker 可能挂在半死的 xrdp 上永不退出，无界 join 会把 `close_keyed`/`launch_entry` 整条链卡死，前端表现为「关掉卡死桌面后重连永久转圈」。`RdpSession::shutdown` 用 `join_with_deadline`（4s 超时放弃回收）；同时 `jr_session_connect` 设 10s TCP 连接超时、`jr_session_disconnect` 显式 `SetEvent(cmd_wake)`。
+- **teardown/join 必须有上界（KI-041，2026-09-08）**：任何线程 `join()` 都不许无界等另一个线程自查退出——FreeRDP worker 可能挂在半死的 xrdp 上永不退出，无界 join 会把 `close_keyed`/`launch_entry` 整条链卡死，前端表现为「关掉卡死桌面后重连永久转圈」。`RdpSession::shutdown` 用 `join_with_deadline`（4s 超时放弃回收）；同时 `jr_session_connect` 设 10s TCP 连接超时、`jr_session_disconnect` 显式 `SetEvent(cmd_wake)`。**代价**：超时分支会刻意泄漏 worker + C session + ctx + 其 native view（KI-043）——见下一条。
+- **native view 所有权属于帧回调上下文（KI-043，2026-09-15）**：`SessionContext.view` 必须是持 native view 的 `Arc`（`FrameTarget`），`RdpSession.view` 另持一份；`Box::from_raw(context)` **只允许在 `join_with_deadline` 成功分支**执行。任何「worker 未 join 成功」的路径——4s 超时、`sessions.insert` 顶替、managed-state 析构——**一律不得**释放视图：worker 仍可能在任意时刻调 `on_frame`，把它改回裸指针就是 P1-5 use-after-free（闪退）。`reclaim()` 的 `worker_finished` 必须由调用方传入（`shutdown` 已 `take()` 掉 handle，字段答不了这个问题）。
+- **会话析构禁止主队列同步派发（KI-043）**：`RdpSession` 的任何析构路径（`Drop`、`insert` 顶替、退出清理）只允许调 `jr_clipboard_sync_stop`（**必须由 `clipboard_active` 守卫**，否则会静默杀掉焦点会话的剪贴板同步＝KI-040 回归）、`jr_session_disconnect`、`jr_view_remove_from_window` —— 这三者都不碰主队列同步点。**禁止**在 `Drop` 里调 `attach_input`（`jr_view_attach_input` 是 `dispatch_sync`，而 `Drop` 可能在管理器锁被持有时运行）或任何 join（会让退出 hang 住 4s × N）。
+- **管理器锁不得跨越主队列同步点（KI-043 / P1-11）**：持有 `RdpSessionManager` 任何锁时，禁止调用 `jr_view_attach_input` / `jr_view_create` / `jr_window_content_size` / `jr_window_safe_area_top`（四个 `dispatch_sync` 入口）。**主线程可达的同步 IPC 命令不得取这些锁** —— 现状靠 `rdp_status`/`session_status`/`all_session_statuses` 三个命令的 `#[tauri::command(async)]` 维持，`focus`/`launch_entry`/`hide_all` 入口另有 `debug_assert_ne!(主线程)` 兜底。往管理器加新的同步命令 = 重新引入永久冻结（只能强杀）。
+- **同 key 启动必须串行（KI-043 / N-01）**：`launch_session` 命令层用 `claim_launch` 的 RAII 声明覆盖**整条命令**（不是只包 `launch_entry` —— 两次调用在连接准备阶段就要耗掉数秒，包在管理器里看不到）。否则并发调用会 `sessions.insert` 顶替，被顶替会话的视图在 worker 仍运行时被释放。
+- **worker 发射点必须在 teardown 后停止（KI-043）**：`jr_maybe_emit` 入口自带 `disconnecting` 检查（互锁），因为 `jr_run_loop` 的循环条件只在迭代顶部判定，从长阻塞恢复的 worker 会再发一帧。**不得**改用「在 `jr_session_disconnect` 里置空 `cb.on_frame_updated`/`cb.user`」——两个相邻非原子字段被分两次读，ARM64 上会读出「旧函数指针 + 新 NULL user」而制造新崩溃。
 
 ---
 
@@ -142,6 +156,9 @@ journalctl -u xrdp --no-pager -n 50 | grep -F "Cannot read private key file" && 
 ### 3.4 桌面可用性（视觉/操作抽查）
 
 - [ ] 画面非黑屏且持续刷新（无 KI-013 回归）
+- [ ] **编码协商未退化（KI-042 金丝雀）**：`grep '\[jr-nego\]' ~/Library/Logs/jetson-remote.log` 最新一行 `connType=6 rfx=1`；且设备端 `grep 'got RFX capture' ~/.xorgxrdp.<display>.log` 命中。任一条不成立即视为回归——画面会静默退到约 1.7 fps 的 legacy 路径，而**外观完全正常**，只有动态内容才暴露。
+- [ ] **动态内容不「一帧一帧浮现」**：在远程跑一段高运动内容（摄像头预览 / `cv2.imshow` 循环）或全屏噪声，画面应连续而非幻灯片式刷出。这是 KI-042 的用户可见判据。
+- [ ] **会话生命周期无 UAF / 无冻结（KI-043）**：`cargo run --bin session_lifecycle_probe` 两条路径都必须 exit 0 —— 正常路径须 `views after drop = 0`（干净回收），`JR_RDP_STALL_AFTER_DISCONNECT_MS=8000` 的 abandon 路径须出现 `[jr-flow] rdp worker join timeout` 且 `views after drop = 1`（刻意保活）。再手工确认：切 Tab、关设备、退出 App 三处都不出现界面冻结（主线程死锁）且进程不崩。
 - [ ] 打开一个窗口、点最大化、拖标题栏、最小化
 - [ ] 双击标题栏不黏窗（KI-018 金丝雀）
 - [ ] 桌面点击/右键正常（无屏保挡窗：`xdotool getmouselocation` 命中的是真实窗口而非全屏无名窗口）
@@ -211,7 +228,10 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 | 编号 | 症状 | 根因 | 状态 |
 |---|---|---|---|
 | KI-004 | dev 二进制连不上 LAN | macOS TCC 拦未签名进程 | dev tunnel 缓解 |
-| KI-013 | 桌面全黑但已连接 | RDPGFX 通道 handler 未接线 | 已修复 |
+| KI-013 | 桌面全黑但已连接 | 图形管线 handler 未接线（当时误归因 RDPGFX） | 已修复；归因经 KI-042 更正 |
+| KI-042 | 动态画面「一帧一帧浮现」 | **未开编码协商 + 连接类型非 LAN** → legacy bitmap 路径 | 已修复（LAN + RFX/JPEG，真机验证） |
+| KI-043 | 闪退（`objc_retain` in `jr_view_present_buffer`） | **`JRView` UAF**：abandon 分支/无 `Drop`/并发顶替释放了视图 | 已修复（Arc 所有权 + Drop + C 发射栅栏） |
+| KI-043 | 整窗卡死只能强杀 | **管理器锁跨 `dispatch_sync(main)`** vs 主线程 1Hz 同步轮询 | 已修复（三命令 `(async)` + 主线程断言） |
 | KI-015 | 新建会话 WM 段错误 | xorgxrdp + WM 交互 | 重连既有会话 |
 | KI-016 | 单实例应用开窗到物理屏 | 会话共享系统 user bus | 私总线修复 |
 | KI-017 | WM 活但拖/最大化全失效 | xfwm4 GL 合成器挂死 | 关合成器+replace |
@@ -241,4 +261,4 @@ nm src-tauri/target/debug/jetson-remote | grep -c jr_session_set_clipboard_text
 
 - 改 `flagsChanged` 或新增 reset 调用点时，先跑设备侧地面真值：`DISPLAY=:10.0 xinput query-state <键盘设备id>` 空闲时 `down:` 列表不应有 Super_L(133)；有即卡键。
 
-*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量；2026-09-08 增补 KI-039（本地网络 TCC 拦截链路 / 正式签名落地）与 §2.4 隧道签名警示；同日增补 KI-040（剪贴板接线/宣告与焦点解耦）与 KI-041（teardown join 上界），对应新增 §2.4 两条硬规则。*
+*文档维护：2026-09-02 初版，沉淀 KI-004/013/015/016/017/018/019 经验；同日增补 KI-020/021（0.2.1）；同日增补 KI-023（Super 卡键）与修饰键同步不变量；2026-09-08 增补 KI-039（本地网络 TCC 拦截链路 / 正式签名落地）与 §2.4 隧道签名警示；同日增补 KI-040（剪贴板接线/宣告与焦点解耦）与 KI-041（teardown join 上界），对应新增 §2.4 两条硬规则；2026-09-15 增补 KI-042（编码协商 + 呈现节流）——新增 §2.4「编码协商」「呈现节流」两条硬规则、§3.4 两条金丝雀，并更正 KI-013 的根因归因；同日增补 KI-043（会话生命周期 UAF + 主线程死锁）——新增 §2.4 五条硬规则（视图所有权 / 析构禁同步派发 / 锁不跨同步点 / 同 key 启动串行 / 发射点在 teardown 后停止）、§3.4 一条生命周期金丝雀，并把 `session_lifecycle_probe` 纳入回归工具。*

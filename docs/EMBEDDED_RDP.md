@@ -73,7 +73,8 @@ src-tauri/
 
 **纯黑 ≠ 字节序问题**（字节序错只会 G↔B 互换/偏色）。纯黑 = `primary_buffer` 全零 = 桌面帧从未合入。
 
-- **根因**：`gdi_init()` 只注册 legacy GDI 回调（BitmapUpdate / 绘图指令 / `SurfaceBits`），**不注册 RDPGFX 图形管线**（`gdi_StartFrame/EndFrame/SurfaceCommand/CreateSurface/MapSurfaceToOutput/UpdateSurfaces`）。这些必须由 `gdi_graphics_pipeline_init(gdi, gfx)` 注册，而该调用处于 `freerdp_client_OnChannelConnectedEventHandler` 内、当 RDPGFX 动态通道（`RDPGFX_DVC_CHANNEL_NAME`）连接时触发。我们的 bridge 从未订阅 PubSub 通道事件 → GFX 帧被静默丢弃 → `EndPaint` 永不触发、`primary_buffer` 全零。
+- **根因（叙述于 2026-09-15 更正）**：`gdi_init()` 只注册 legacy GDI 回调（BitmapUpdate / 绘图指令 / `SurfaceBits`），**不注册图形管线回调**（`gdi_StartFrame/EndFrame/SurfaceCommand/CreateSurface/MapSurfaceToOutput/UpdateSurfaces`）。这些必须由 `gdi_graphics_pipeline_init(gdi, gfx)` 注册，而该调用处于 `freerdp_client_OnChannelConnectedEventHandler` 内。我们的 bridge 从未订阅 PubSub 通道事件 → 帧被静默丢弃 → `EndPaint` 永不触发、`primary_buffer` 全零。
+  > **⚠️ 原文把这条通道称作「RDPGFX」，并断言「XRDP 默认协商 RDPGFX」，这是错的。** xrdp 0.9.x 源码树内没有 EGFX 模块，无法协商 RDPGFX（见 KI-042 的完整证据）。0.9.x 走的是 **legacy Fastpath Surface Commands + RemoteFX**，而 `gdi_graphics_pipeline_init()` 在 FreeRDP 侧同时接线这两条路径 —— 所以**接线动作本身是对的，只是归因错误**。真正让画面出现的是下面那个无条件 33ms tick；黑屏的原始机制（`EndPaint` 为何不触发）**从未被证实**。
 - **修复**（`native/freerdp_bridge/bridge.c`）：`jr_pre_connect` 中订阅默认处理器：
   ```c
   PubSub_SubscribeChannelConnected(instance->context->pubSub,
@@ -82,6 +83,7 @@ src-tauri/
                                       freerdp_client_OnChannelDisconnectedEventHandler);
   ```
   需 `#include <freerdp/event.h>` + `<winpr/collections.h>`。post_disconnect 反订阅。GFX 与 legacy 都写入同一个 `gdi->primary_buffer`，所以一个 `EndPaint`→blit 覆盖两路。
+  > 该订阅**保留但改标为防御性**：对真正支持 GFX 的服务端（Windows / xrdp ≥ 0.10.2）它是唯一保护，且与 FreeRDP 参考客户端一致；对 xrdp 0.9.x 不参与实际帧路径。
 - **诊断（DEV-only，`bridge.c` `jr_diag_frame`）**：`JR_RDP_DIAG=1` 每帧采样 2048 点打印 `nnz/rgb_nonzero/min/max/hash/首中末像素`；`JR_RDP_DUMP_FRAME=1` 落盘 `/tmp/jetson-remote-frame*.pppm`。probe 主循环同时直接轮询 `jr_session_get_framebuffer`（与 `EndPaint` 解耦，能抓到 GFX 路径写入的内容）。
 - **验证**：隧道（绕过 macOS 本地网络权限）→ 连接成功、`Local framebuffer PIXEL_FORMAT_BGRX32`、`primary_buffer` 非黑（`nnz=4096/4096`）。
 
@@ -89,6 +91,42 @@ src-tauri/
 1. macOS「本地网络」隐私(TCC) 拦 unsigned 二进制直连（`nc`/`ssh` 是 Apple 签名放行，Homebrew python/cargo 未签名 → `No route to host`/`Couldn't get socket ip address`）。已加入 `src-tauri/Info.plist` 的 `NSLocalNetworkUsageDescription`（bundle 内已确认注入），app 首次启动会弹授权；前端加了有界自动重连（允许后自动 retry）。
 2. 设备 xrdp TLS 私钥 `key.pem`（snakeoil）权限：`xrdp` 用户不在 `ssl-cert` 组 → `Permission denied`，已 `adduser xrdp ssl-cert` 修复。
 3. 新建 Xorg 会话窗口管理器段错误（`exit 139`）：A/B 已排除 GL 合成器（`use_compositing=false` 后 GL 警告消失但 segfault 仍在），真根因待 gdb 定位；重连既有 `:10` 不受影响。
+
+## 7.1 编码协商（2026-09-15，KI-042）
+
+**这一节决定了画面是不是「一帧一帧浮现」。改动 `jr_session_connect` 的 settings 块前必读。**
+
+`jr_session_connect()` 在 `freerdp_client_start` 之前设置：
+
+```c
+freerdp_set_connection_type(settings, CONNECTION_TYPE_LAN);      /* 必须是 LAN */
+freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE);
+freerdp_settings_set_bool(settings, FreeRDP_JpegCodec, TRUE);
+/* + 6 个桌面装饰性能提示压到省流量侧 */
+```
+
+两个条件**都必须满足**，缺任一都会静默退化到 legacy bitmap 路径（摄影类内容 1280×724 时约 1.7 fps）：
+
+1. **连接类型必须恰好是 `CONNECTION_TYPE_LAN`(0x06)**。xrdp 只在客户端 Info PDU 声明 LAN 时才创建编码器（`xrdp/xrdp_encoder.c:60`），该字段由 `libxrdp/xrdp_sec.c:2126` 从 Info PDU 读出。FreeRDP **库**默认是 `AUTODETECT`(0x07)——`xfreerdp`/`sdl-freerdp` 默认也是，所以连 README 里那条手工验证命令**同样没有编码器**。
+2. **必须显式开启 codec**。FreeRDP 库 API 把每个 bitmap codec 都留成 FALSE（`settings.c` 从不为 `RemoteFxCodec`/`NSCodec`/`JpegCodec` 赋值 → calloc 零值；`SupportGraphicsPipeline` 由 `ServerMode` 推导，客户端恒 FALSE）。只有 CLI 会开，且**只有 AUTODETECT 分支**会开——LAN 分支不会。
+
+**注意 `freerdp_set_connection_type(LAN)` 不会开启 `SupportGraphicsPipeline`**（`gfx=0`），对本项目的 xrdp 0.9.x 是正确且保守的：0.9.x 无 EGFX，且 bridge 只接线了 `BeginPaint`/`EndPaint`/`DesktopResize` + GFX DVC，未接线 legacy `update->SurfaceBits`。
+
+**协商探针**：每次连接输出一行（`[jr-nego]`，走既有 `fprintf(stderr)` → release 下进 `~/Library/Logs/jetson-remote.log`）：
+
+```
+[jr-nego] connType=6 rfx=1 rfxId=0 jpeg=1 jpegId=0 ns=0 nsId=0 gfx=0 gfxDvc=0 mfrs=3948544
+```
+
+期望形状：`connType=6 rfx=1 gfxDvc=0`。`rfxId=0` 是正常的——xrdp 在自己 Demand Active 里把 RFX 的 codecID 写成 0（"client sets"），真正 id 由客户端在 Confirm Active 给出。
+GFX 是否连上**只能用 PubSub 钩子**判断（`jr_on_channel_connected` 比对 `RDPGFX_DVC_CHANNEL_NAME`）：`freerdp_channels_get_static_channel_interface(ctx->channels, "rdpgfx")` 对**动态**通道恒返回 NULL，用它做探针会永远报「无 GFX」。
+
+**服务端 oracle**：`grep 'got RFX capture' ~/.xorgxrdp.<display>.log`。只有 `capture_code==2`(RFX) / `==3`(H264) 两个加速分支（`xorgxrdp/module/rdpClientCon.c:887-905`）。客户端 `rfx=1` 但服务端无此行为 → 失败在 xrdp 侧。
+
+**上限与实测**（详见 KI-042）：xorgxrdp 的 RFX 捕获/编码在 aarch64 上是**单线程标量 C**（其 SIMD 为 x86 专属），实测 Thor 上 Xorg 占单核 54–90%。理论上限 25 fps（`MIN_MS_BETWEEN_FRAMES 40`，0.9.x 无配置开关）未触及——**是编码跟不上，不是节流**。突破需 xrdp ≥ 0.10.2 + `--enable-x264` + `gfx.toml`，Ubuntu 包不提供。
+
+**量测方法**（改动此处后必须重测）：headless 仪器是 `cargo run --bin embedded_rdp_probe`；客户端交付帧率用 `JR_RDP_DIAG=1` 的 FNV 哈希变化率统计（**不是** `on_frame` 次数——33ms tick 会让它恒等于 emit 速率）。合成源必须包含**全屏噪声**模式，只测低熵移动图形会因压缩容易而产生假象。
+
 ## 8. 输入透传（2026-09-01，4B-2 input 接线）
 
 **症状**：桌面能渲染但鼠标/键盘无效——`JRView` 只有 blit 没有事件处理，`jr_session_send_*` 无人调用。
@@ -134,3 +172,16 @@ src-tauri/
 6. 完成 r2 §4.16「完成即停」验收（fake 全绿 + 真实 adapter 编译 + 真机会话 smoke）。
 
 **完成前禁止动的心脏命令**：`launch_keyed`/`close_keyed` 的 stop-before-start 顺序、`RdpSession::shutdown` 的 4s 有界 join（KI-041）、`jr_clipboard_sync_start/stop` 的焦点迁移（KI-022/040）、bridge 的单 owner 命令队列（KI-027）。
+
+### 2026-09-15 对以上四处的影响（KI-043，已实施）
+
+修闪退/卡死时这四处都被触及，但**都是加强而非削弱**，逐条记录以免后人误判：
+
+| 心脏命令 | 本轮改动 | 判断 |
+|---|---|---|
+| `launch_keyed`/`close_keyed` 的 stop-before-start 顺序 | `launch_entry` 加主线程断言；并发启动在**命令层**加 `claim_launch` RAII 声明 | 顺序保持不变：仍不会在停止前驱的剪贴板同步之前启动后继的 |
+| `RdpSession::shutdown` 的 4s 有界 join（KI-041） | 拆成 `detach_fast()` + 有界 join；新增 `reclaim(worker_finished)` 与 `impl Drop` | join 仍是 4s；detach 现在**也覆盖了**过去跳过它的两条路径（`insert` 顶替、退出析构），上界的适用范围反而变宽 |
+| `jr_clipboard_sync_start/stop` 的焦点迁移（KI-022/040） | `Drop`/`detach_fast` 新增一次 `jr_clipboard_sync_stop`，**由 `clipboard_active` 守卫** | 必须如此：C 侧 owner 是全局的且 `stop` 无 session 参数，不守卫就会让后台会话析构杀掉焦点会话的同步（KI-040 回归） |
+| bridge 单 owner 命令队列（KI-027） | `disconnecting` 改互锁 + `jr_maybe_emit` 入口短路 | 未触及队列语义；新增的只是 worker 线程上的一个标志读取，不入队 |
+
+**新增的关键不变量**（详见 `docs/KNOWN_ISSUES.md` KI-043 与 `docs/CONNECTION_REGRESSION_GUIDE.md` §2.4）：native view 的所有权属于**帧回调上下文**（`SessionContext.view` 持 `Arc`），`Box::from_raw(context)` 只允许在 join 成功分支执行；会话析构路径禁止一切主队列同步派发。

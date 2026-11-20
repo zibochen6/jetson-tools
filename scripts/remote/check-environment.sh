@@ -87,10 +87,38 @@ if ip -6 addr show lo 2>/dev/null | grep -q 'inet6 ::1/128'; then
   LO_IPV6_LOOPBACK="true"
 fi
 
+# KI-044：远程会话（xrdp）下的 NetworkManager 授权。Ubuntu 自带的 NM polkit 规则
+# 只对 subject.local && subject.active 放行，而 xrdp 是 remote 会话（local=false），
+# 规则不匹配 → 落到 NM policy 默认值：enable-disable-network 的 allow_inactive=no
+# 直接拒绝（远程桌面里改 WiFi 报 "Not authorized to control networking"），
+# settings.modify.system 则要求交互认证而会话内没有 polkit agent。
+# pkcheck 取当前进程的判定：修复（50-local.d 的 .pkla）落盘后此处应为 true。
+NM_POLKIT_OK="false"
+if command -v pkcheck >/dev/null 2>&1 \
+   && pkcheck --action-id org.freedesktop.NetworkManager.enable-disable-network --process $$ >/dev/null 2>&1; then
+  NM_POLKIT_OK="true"
+fi
+
+# KI-045：sesman 必须监听 127.0.0.1，否则远程桌面的剪贴板必死。
+# xrdp 0.9.17 chansrv_config.c 的 use_unix_socket **只**由这一条推导：
+#     if (name == "ListenAddress" && value == "127.0.0.1") use_unix_socket = 1;
+# （默认 0，键缺失同样为 0。）为 0 时 chansrv 转去监听 TCP `7200 + display`，
+# 而 xrdp 前端只连 /run/xrdp/sockdir/xrdp_chansrv_socket_<display> → 握手永远失败
+# → CLIPRDR 永不协商 → 剪贴板双向全死，且重连救不回来。
+# 这条是**静态可判**的（不像 chansrv 进程/socket 只在活跃会话期间存在），
+# 所以用它当分类依据，而不是去猜运行时的 chansrv 状态。
+# 注意 chansrv 接受连接后会主动删掉自己的监听 socket，运行期查那个文件并不可靠。
+SESMAN_LISTEN_LOCAL="false"
+if grep -qE '^[[:space:]]*ListenAddress[[:space:]]*=[[:space:]]*127\.0\.0\.1[[:space:]]*$' \
+     /etc/xrdp/sesman.ini 2>/dev/null; then
+  SESMAN_LISTEN_LOCAL="true"
+fi
+
 export XRDP_INSTALLED XRDP_VERSION XORGXRDP_INSTALLED XORGXRDP_VERSION \
        XFCE_INSTALLED XRDP_ENABLED XRDP_ACTIVE XRDP_SESMAN_ACTIVE \
        PORT_3389_LISTENING PORT_3350_LISTENING \
-       XRDP_IN_SSL_CERT_GROUP SESSION_CONFIGURED XSESSIONRC_OK LO_IPV6_LOOPBACK
+       XRDP_IN_SSL_CERT_GROUP SESSION_CONFIGURED XSESSIONRC_OK LO_IPV6_LOOPBACK \
+       NM_POLKIT_OK SESMAN_LISTEN_LOCAL
 
 python3 - <<'PY'
 import json
@@ -117,5 +145,7 @@ print(json.dumps({
     "session_configured": b("SESSION_CONFIGURED"),
     "xsessionrc_ok": b("XSESSIONRC_OK"),
     "lo_ipv6_loopback": b("LO_IPV6_LOOPBACK"),
+    "nm_polkit_ok": b("NM_POLKIT_OK"),
+    "sesman_listen_local": b("SESMAN_LISTEN_LOCAL"),
 }, ensure_ascii=False, indent=2))
 PY

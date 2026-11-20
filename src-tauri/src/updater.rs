@@ -22,6 +22,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const RELEASES_API: &str = "https://api.github.com/repos/zibochen6/jetson-tools/releases/latest";
+/// Self-install only exists for the macOS `.app` bundle. Linux packages are
+/// updated through the distro/release page (a running .deb cannot swap itself).
+#[cfg(target_os = "macos")]
 const ASSET_SUFFIX: &str = ".app.tar.gz";
 
 #[derive(Debug, Serialize)]
@@ -172,16 +175,21 @@ pub async fn check_for_update() -> Result<UpdateCheckResult, UpdateError> {
     let body_text = json["body"].as_str().map(str::to_owned);
     let _ = body_text;
 
-    let assets = json["assets"].as_array().cloned().unwrap_or_default();
-    let app_asset = assets
-        .iter()
-        .filter_map(|a| {
-            let name = a["name"].as_str()?;
-            let url = a["browser_download_url"].as_str()?;
-            Some((name.to_lowercase(), url.to_string()))
-        })
-        .find(|(name, _)| name.ends_with(ASSET_SUFFIX))
-        .map(|(_, url)| url);
+    #[cfg(target_os = "macos")]
+    let app_asset = {
+        let assets = json["assets"].as_array().cloned().unwrap_or_default();
+        assets
+            .iter()
+            .filter_map(|a| {
+                let name = a["name"].as_str()?;
+                let url = a["browser_download_url"].as_str()?;
+                Some((name.to_lowercase(), url.to_string()))
+            })
+            .find(|(name, _)| name.ends_with(ASSET_SUFFIX))
+            .map(|(_, url)| url)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let app_asset: Option<String> = None;
 
     let update_available = !tag.is_empty() && version_is_newer(&current, &tag);
 
@@ -202,14 +210,28 @@ pub async fn download_and_install_update(
     app: tauri::AppHandle,
     url: String,
 ) -> Result<(), UpdateError> {
-    tauri::async_runtime::spawn_blocking(move || do_install(url))
-        .await
-        .map_err(|e| UpdateError::new("install", e.to_string()))??;
-    // Not reached on success (do_install exits); keep the compiler happy:
-    let _ = app;
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Linux runs from a .deb; replacing the package underneath a running
+        // process is not safe. Send the user to the release page instead.
+        let _ = (app, url);
+        return Err(UpdateError::new(
+            "notInstalledApp",
+            "Linux 版不支持自动替换安装，请从 GitHub Release 页下载新的 .deb 并用 apt 安装",
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || do_install(url))
+            .await
+            .map_err(|e| UpdateError::new("install", e.to_string()))??;
+        // Not reached on success (do_install exits); keep the compiler happy:
+        let _ = app;
+        Ok(())
+    }
 }
 
+#[cfg(target_os = "macos")]
 fn do_install(url: String) -> Result<(), UpdateError> {
     let bundle = running_bundle().ok_or_else(|| {
         UpdateError::new(

@@ -48,7 +48,14 @@ fn window_ns_window(app: &AppHandle) -> Result<*mut c_void, RdpError> {
             .map(|w| w.cast())
             .map_err(|_| RdpError::Unknown)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        // The opaque handle is the GtkOverlay installed by `.setup()` (see
+        // `rdp::linux_view`). Missing means the reparent bootstrap failed.
+        let _ = app;
+        crate::rdp::linux_view::surface_handle().ok_or(RdpError::Unknown)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = app;
         Err(RdpError::Unknown)
@@ -156,7 +163,16 @@ pub async fn close_remote_desktop(
 }
 
 /// Current process status — the frontend polls this to detect close/exit.
-#[tauri::command]
+///
+/// `(async)` here is load-bearing, not cosmetic. A plain `#[tauri::command]` on
+/// a non-async fn runs its body inline on the IPC (main) thread, and this
+/// command takes the session-manager lock. A manager method that holds that same
+/// lock across a `dispatch_sync(main)` (focus/refocus → attach_input) would then
+/// wait for the main thread while the main thread waits for the lock — a
+/// permanent, unrecoverable freeze (P1-11). `(async)` moves the body to a tokio
+/// thread, keeping the main thread out of that cycle. Same reasoning applies to
+/// `session_status` and `all_session_statuses`, which the frontend polls at 1 Hz.
+#[tauri::command(async)]
 pub fn rdp_status(
     sidecar: State<'_, RdpProcessManager>,
     embedded: State<'_, RdpSessionManager>,
@@ -238,6 +254,10 @@ async fn prepare_request(
 
 const FIRST_DESKTOP_TIMEOUT: Duration = Duration::from_secs(18);
 const REPAIRED_DESKTOP_TIMEOUT: Duration = Duration::from_secs(25);
+/// Grace for CLIPRDR's MonitorReady after the desktop is already usable. On a
+/// healthy device the handshake completes during connect, so this costs nothing;
+/// it only elapses when xrdp never reached its channel server (KI-045).
+const CLIPBOARD_READY_GRACE: Duration = Duration::from_secs(3);
 
 async fn wait_for_usable_desktop(
     sessions: &RdpSessionManager,
@@ -256,12 +276,35 @@ async fn wait_for_usable_desktop(
     }
 }
 
-/// Recover the specific XRDP failure where the transport is alive but sesman
-/// never produces a desktop. This is intentionally narrower than bootstrap:
-/// packages/configuration already passed verification, so only the two
-/// coupled services are restarted AND stale Xorg sessions cleared — restarting
-/// xrdp alone never kills existing sessions, so a re-connect would land back
-/// on the same blocked session. The real password travels over SSH stdin.
+/// Wait (briefly) for CLIPRDR to negotiate. Returns false if the session died or
+/// the grace expired — both mean the clipboard will not work for this connection.
+async fn wait_for_clip_ready(
+    sessions: &RdpSessionManager,
+    session_id: &str,
+    timeout: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if sessions.clip_ready_keyed(session_id) {
+            return true;
+        }
+        if !sessions.is_running_keyed(session_id) || tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Restart the XRDP stack so the NEXT connect gets a working channel server
+/// (KI-045). Ordering is the whole point: `xrdp.service` carries
+/// `RuntimeDirectory=xrdp`, so restarting it recreates `/run/xrdp` and deletes
+/// the listen socket (`/run/xrdp/sockdir/xrdp_chansrv_socket_<display>`) out
+/// from under a still-running `xrdp-chansrv`. That process never recreates it —
+/// chansrv only creates the socket at startup — so xrdp logs
+/// `xrdp_mm_connect_chansrv: connect failed`, abandons the channel server for
+/// that connection, and the clipboard stays dead until someone kills chansrv
+/// (a plain reconnect never heals it). Hence: kill chansrv first, then restart.
+/// The real password travels over SSH stdin.
 async fn restart_remote_desktop_services(
     app: &AppHandle,
     endpoints: &TunnelEndpoints,
@@ -305,14 +348,19 @@ async fn restart_remote_desktop_services(
     let input = format!("{password}\n");
     let result = session
         .exec_with_stdin(
-            "sudo -S -p '' systemctl restart xrdp-sesman xrdp; rc=$?; pkill -f '^/usr/lib/xorg/Xorg :1[0-9]' 2>/dev/null; exit $rc",
+            "sudo -S -p '' sh -c 'pkill -x xrdp-chansrv 2>/dev/null; \
+rm -f /run/xrdp/sockdir/xrdp_chansrv_socket_* 2>/dev/null; \
+systemctl restart xrdp-sesman xrdp; rc=$?; \
+pkill -f \"^/usr/lib/xorg/Xorg :1[0-9]\" 2>/dev/null; exit $rc'",
             input.as_bytes(),
         )
         .await
         .map_err(|_| map_rdp_error(RdpError::Unknown))?;
     match result.exit_code {
         Some(0) | None => {
-            eprintln!("[jr-flow] XRDP services restarted and stale sessions cleared after no-desktop timeout");
+            eprintln!(
+                "[jr-flow] XRDP services restarted (xrdp-chansrv cleared first) and stale sessions cleared after no-desktop timeout"
+            );
             Ok(())
         }
         Some(_) => Err(map_rdp_error(RdpError::Unknown)),
@@ -356,6 +404,19 @@ pub async fn launch_session(
     }
 
     let device_id = request.device_id.clone();
+    // Serialize launches for this key. Without this, two overlapping calls both
+    // reach `sessions.insert` and the loser's session is dropped while its
+    // worker is still running — the view is freed under a live `on_frame`
+    // (KI-043 / audit N-01). Held for the rest of the command; a re-launch that
+    // arrives meanwhile just gets `AlreadyRunning` and the 1 Hz status poll
+    // settles the tab once the first launch lands.
+    let _launch_claim = match embedded.claim_launch(&session_id) {
+        Some(claim) => claim,
+        None => {
+            eprintln!("[jr-flow] rdp session launch already in flight, skipping id={session_id}");
+            return Ok(RdpLaunchResult::AlreadyRunning);
+        }
+    };
     let endpoints = prepare_request(&app, &secrets, &tunnels, &mut request).await?;
 
     let config = RdpConnectionConfig::from(request);
@@ -385,7 +446,16 @@ pub async fn launch_session(
             SessionLaunchMode::Background,
         )
         .map_err(map_rdp_error)?;
-    if wait_for_usable_desktop(&embedded, &session_id, FIRST_DESKTOP_TIMEOUT).await {
+    let desktop_up = wait_for_usable_desktop(&embedded, &session_id, FIRST_DESKTOP_TIMEOUT).await;
+    // A usable desktop only proves the *screen* works: CLIPRDR rides a separate
+    // channel served by `xrdp-chansrv`, which xrdp can fail to reach while
+    // everything else looks healthy. MonitorReady arrives during connect, so
+    // this grace costs nothing unless the channel server is unreachable — in
+    // which case we take the same repair path, which now clears chansrv first
+    // (KI-045). One repair per launch: falling through happens at most once.
+    let clipboard_up =
+        desktop_up && wait_for_clip_ready(&embedded, &session_id, CLIPBOARD_READY_GRACE).await;
+    if desktop_up && clipboard_up {
         if launch_mode == SessionLaunchMode::Focused {
             embedded
                 .focus(
@@ -398,7 +468,13 @@ pub async fn launch_session(
         return Ok(RdpLaunchResult::Opened);
     }
 
-    eprintln!("[jr-flow] no usable desktop frame; repairing XRDP services");
+    if desktop_up {
+        eprintln!(
+            "[jr-flow] clipboard channel never negotiated (xrdp could not reach xrdp-chansrv); repairing"
+        );
+    } else {
+        eprintln!("[jr-flow] no usable desktop frame; repairing XRDP services");
+    }
     embedded
         .close_keyed(&session_id)
         .await
@@ -429,6 +505,13 @@ pub async fn launch_session(
         )
         .map_err(map_rdp_error)?;
     if wait_for_usable_desktop(&embedded, &session_id, REPAIRED_DESKTOP_TIMEOUT).await {
+        // Only a warning: this launch gets one repair, and a desktop without a
+        // clipboard still beats no desktop at all.
+        if !wait_for_clip_ready(&embedded, &session_id, CLIPBOARD_READY_GRACE).await {
+            eprintln!(
+                "[jr-flow] clipboard still unavailable after repair (CLIPRDR never negotiated); keeping the desktop"
+            );
+        }
         if launch_mode == SessionLaunchMode::Focused {
             embedded
                 .focus(
@@ -491,8 +574,9 @@ pub async fn close_session(
     }
 }
 
-/// One session's status (frontend polls per active tab).
-#[tauri::command]
+/// One session's status (frontend polls per active tab). `(async)` — see
+/// `rdp_status` for why the main thread must never take the manager lock.
+#[tauri::command(async)]
 pub fn session_status(embedded: State<'_, RdpSessionManager>, session_id: String) -> RdpStatus {
     embedded.status_keyed(&session_id)
 }
@@ -506,8 +590,9 @@ pub struct SessionStatusEntry {
 }
 
 /// Every session's status in one round-trip (tab-bar status dots + exit
-/// detection for all connected devices).
-#[tauri::command]
+/// detection for all connected devices). `(async)` — see `rdp_status`; this one
+/// is polled every second, so it was the most reliable trigger of the freeze.
+#[tauri::command(async)]
 pub fn all_session_statuses(embedded: State<'_, RdpSessionManager>) -> Vec<SessionStatusEntry> {
     embedded
         .all_statuses()

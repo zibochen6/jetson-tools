@@ -378,8 +378,26 @@ fn classify_ensure(
 /// match is safe: only our tunnel ssh carries the app-scoped known_hosts
 /// path in its command line.
 fn default_tunnel_root() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join("Library/Application Support/com.jetsonremote.app/tunnel"))
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")?;
+        Some(
+            PathBuf::from(home)
+                .join("Library/Application Support/com.jetsonremote.app/tunnel"),
+        )
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(config) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+            return Some(PathBuf::from(config).join("com.jetsonremote.app/tunnel"));
+        }
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join(".config/com.jetsonremote.app/tunnel"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
 }
 
 fn sweep_orphans(known_hosts: &Path) {

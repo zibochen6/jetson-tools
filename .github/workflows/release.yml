@@ -1,9 +1,14 @@
 name: release
 
-# Build & publish the macOS app on tag push (v*). The tag commit must have
-# bumped the version in src-tauri/Cargo.toml + tauri.conf.json + package.json.
+# Build & publish on tag push (v*): macOS .app/.dmg + Linux amd64 .deb.
 #
-# Since 0.3.8 the app is signed with the Apple Development certificate
+# Flow: preflight (version consistency) -> create DRAFT release -> parallel
+# build-macos / build-linux upload assets to the draft -> publish job flips the
+# draft live. Linux is the required asset; a failed macOS build (or an `-rc.`
+# tag) publishes as a prerelease so `/releases/latest` never hands the macOS
+# updater a release without an `.app.tar.gz`.
+#
+# Since 0.3.8 the macOS app is signed with the Apple Development certificate
 # (Team 9Y4B7WBUU2) imported from repo secrets, so it carries a Team ID and a
 # com.apple.application-identifier entitlement. macOS 15+/27 "Local Network"
 # privacy silently blocks LAN connections from ad-hoc-signed apps ("no
@@ -17,11 +22,57 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
-  publish:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag/version consistency
+        run: |
+          set -euo pipefail
+          RAW="${GITHUB_REF_NAME#v}"
+          BASE="${RAW%%-rc.*}"
+          PKG=$(node -p "require('./package.json').version")
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path src-tauri/Cargo.toml | jq -r '.packages[0].version')
+          LOCK=$(awk '
+            /^name = "jetson-remote"$/ { found=1; next }
+            found && /^version = / { gsub(/[version ="]/, ""); print; exit }
+          ' src-tauri/Cargo.lock)
+          echo "tag=$RAW base=$BASE package.json=$PKG tauri.conf=$CONF Cargo.toml=$CARGO Cargo.lock=$LOCK"
+          for v in "$PKG" "$CONF" "$CARGO" "$LOCK"; do
+            if [ "$v" != "$BASE" ]; then
+              echo "::error::version mismatch: tag base $BASE vs $v"
+              exit 1
+            fi
+          done
+
+  create-release:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; reusing it"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --draft --generate-notes --title "$TAG"
+          fi
+
+  build-macos:
+    needs: create-release
     runs-on: macos-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -69,17 +120,143 @@ jobs:
           tar -czf "Jetson Remote.app.tar.gz" \
             -C src-tauri/target/release/bundle/macos "Jetson Remote.app"
 
-      - name: Publish GitHub Release
+      - name: Upload assets to draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
           DMG=src-tauri/target/release/bundle/dmg/*.dmg
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release $TAG exists, uploading assets"
-            gh release upload "$TAG" $DMG "Jetson Remote.app.tar.gz" \
-              --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$TAG" $DMG "Jetson Remote.app.tar.gz" \
-              --repo "$GITHUB_REPOSITORY" --generate-notes --title "$TAG"
+          gh release upload "$TAG" $DMG "Jetson Remote.app.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-assets
+          if-no-files-found: ignore
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            Jetson Remote.app.tar.gz
+
+  build-linux:
+    needs: create-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libfreerdp3-dev libwinpr3-dev \
+            libcjson-dev libfuse3-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libgl1 libegl1 \
+            xvfb xauth dbus-x11
+          echo "freerdp3: $(pkg-config --modversion freerdp3)"
+          echo "gtk+-3.0: $(pkg-config --modversion gtk+-3.0)"
+          echo "webkit2gtk-4.1: $(pkg-config --modversion libwebkit2gtk-4.1)"
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend checks
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build .deb
+        run: pnpm tauri build --bundles deb
+
+      - name: Inspect package
+        run: |
+          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb)
+          echo "deb=$DEB"
+          dpkg-deb -I "$DEB"
+          dpkg-deb -c "$DEB" | grep -E 'applications|icons' | head -20
+
+      - name: Clean-container install + start smoke
+        run: |
+          DEB=$(ls "$PWD"/src-tauri/target/release/bundle/deb/*.deb)
+          docker run --rm -v "$PWD:/pkg:ro" -v "$(dirname "$DEB"):/debs:ro" ubuntu:24.04 \
+            bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq xvfb xauth dbus-x11 libgl1 libegl1 >/dev/null
+              apt-get install -y -qq /debs/*.deb >/dev/null
+              if ldd /usr/bin/jetson-remote | grep -q "not found"; then
+                echo "::error::missing shared libraries"
+                ldd /usr/bin/jetson-remote | grep "not found"
+                exit 1
+              fi
+              set +e
+              WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+              LIBGL_ALWAYS_SOFTWARE=1 \
+              timeout 20s xvfb-run -a dbus-run-session -- /usr/bin/jetson-remote
+              code=$?
+              set -e
+              echo "smoke exit=$code (124 = still running at timeout)"
+              test "$code" -eq 124
+            '
+
+      - name: Upload assets to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG" src-tauri/target/release/bundle/deb/*.deb \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          if-no-files-found: ignore
+          path: src-tauri/target/release/bundle/deb/*.deb
+
+  publish:
+    needs: [create-release, build-macos, build-linux]
+    if: always() && needs.create-release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish (or keep draft on Linux failure)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          MACOS: ${{ needs.build-macos.result }}
+          LINUX: ${{ needs.build-linux.result }}
+        run: |
+          set -euo pipefail
+          if [ "$LINUX" != "success" ]; then
+            echo "::error::Linux build did not succeed ($LINUX); release $TAG stays a draft"
+            exit 1
           fi
+          if [ "$MACOS" != "success" ]; then
+            BODY=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body)
+            printf '%s\n\n> macOS 构建未完成（%s），本版本暂只包含 Linux amd64 .deb。\n' \
+              "$BODY" "$MACOS" > "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          if [ "$MACOS" != "success" ] || [[ "$TAG" == *-rc.* ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'

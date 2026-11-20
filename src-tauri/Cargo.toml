@@ -1,6 +1,6 @@
 [package]
 name = "jetson-remote"
-version = "0.3.9"
+version = "0.3.12"
 description = "Zero-configuration remote desktop client for NVIDIA Jetson"
 authors = ["you"]
 edition = "2021"
@@ -33,3 +33,9 @@ thiserror = "2.0.20"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+
+# GTK3 (same major/feature as Tauri 2.11 uses on Linux). Rust only touches
+# `gtk_window()` / `default_vbox()` to hand raw pointers to the C bridge; all
+# container/widget operations live in `native/freerdp_bridge/linux_view.c`.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", features = ["v3_24"] }

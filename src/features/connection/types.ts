@@ -279,14 +279,14 @@ const ERROR_COPY: Record<ConnectionErrorCode, ConnectionError> = {
     title: "FreeRDP is required",
     suggestions: [
       "FreeRDP is required for this development build.",
-      "Install it with: brew install freerdp",
+      "Install it with: brew install freerdp (macOS) or sudo apt install freerdp3 (Linux)",
     ],
   },
   rdp_connection_failed: {
     code: "rdp_connection_failed",
     title: "Couldn't reach the Jetson desktop.",
     suggestions: [
-      "If macOS shows a Local Network permission prompt, click Allow — the app will retry automatically.",
+      "If the system shows a local network permission prompt, click Allow — the app will retry automatically.",
       "Otherwise check the Jetson is powered on and reachable, then retry.",
     ],
   },
