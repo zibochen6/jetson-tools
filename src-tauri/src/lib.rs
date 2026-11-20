@@ -84,8 +84,12 @@ pub fn run() {
     redirect_stderr_to_logfile();
     // `run()` executes on the platform main thread (AppKit/GTK); the session
     // manager's lock-order assertions depend on knowing which thread that is
-    // (P1-11).
+    // (P1-11). The GTK view also needs the identity explicitly: `.setup()`
+    // runs between main-loop iterations, where context ownership is false
+    // (KI-046).
     rdp::session::record_main_thread();
+    #[cfg(target_os = "linux")]
+    rdp::linux_view::record_main_thread();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(rdp::manager::RdpProcessManager::new())

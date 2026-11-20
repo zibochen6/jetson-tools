@@ -96,7 +96,7 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore /
 - **改任何连接/输入/剪贴板代码前必读**：`docs/CONNECTION_REGRESSION_GUIDE.md`（链路全景、编码硬规则、回归清单、调试速查）
 ## 发布与自动更新
 
-- **发布流程**：改完功能 → 同步 bump 三处版本（`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`package.json`）→ 打 tag 推 GitHub（`v0.3.x`）→ Actions 自动构建并发布 Release（macOS dmg + `Jetson Remote.app.tar.gz`，Linux amd64 `.deb`）。
+- **发布流程**：改完功能 → 同步 bump 四处版本（`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`、`package.json`；preflight 还会校验 tag）→ 打 tag 推 GitHub（`v0.3.x`）→ Actions 自动构建并发布 Release（macOS dmg + `Jetson Remote.app.tar.gz`，Linux amd64 `.deb`）。
   - 本地手动发布：`scripts/release.sh <version>`（走 gh CLI）。
 - **自动更新**：稳定版 app 底栏有「检查更新」按钮 → 拉到最新 Release 后「下载并安装」→ 自动替换当前 app 并重启。
   - 开发版（`tauri dev`）只提示新版本并给下载页链接，不做自替换。
@@ -106,9 +106,9 @@ printf '<pass>\n' | sdl-freerdp /v:<jetson> /u:<user> /from-stdin /cert:ignore /
 
 ## Linux 支持（Ubuntu 24.04 amd64）
 
-- **安装**：从 [Releases](https://github.com/zibochen6/jetson-tools/releases) 下载 `jetson-remote_<version>_amd64.deb`，然后 `sudo apt install ./jetson-remote_*.deb`。
+- **安装**：从 [Releases](https://github.com/zibochen6/jetson-tools/releases) 下载 `Jetson.Remote_<version>_amd64.deb`（本地 `tauri build` 产物的文件名是 `Jetson Remote_<version>_amd64.deb`，上传 GitHub 后空格会变成点），然后 `sudo apt install ./Jetson.Remote_*.deb`。
 - **系统要求**：Ubuntu 24.04+ **amd64 桌面**（glibc 2.39、`libgtk-3-0t64`、WebKitGTK 4.1）。22.04/20.04 与 arm64 不在支持范围。
-- **桌面嵌入**：GTK3 内嵌视图，远程桌面从窗口顶部 44px 标签栏下方开始；鼠标/键盘、Ctrl 组合键、中文输入法（IBus/Fcitx，preedit 不发送、提交走 Unicode）与双向文本剪贴板与 macOS 行为一致。
+- **桌面嵌入**：GTK3 内嵌视图，远程桌面从窗口顶部 44px 标签栏下方开始；鼠标/键盘、Ctrl 组合键、中文输入法（IBus/Fcitx，preedit 不发送、提交走 Unicode）与双向文本剪贴板按 macOS 同样的契约实现。真实 24.04 桌面上的 GUI 交互验收仍在进行，CI 目前覆盖安装与启动阶段。
 - **自动更新**：Linux 版**不做**自替换安装；「检查更新」只显示 Release 页面链接，下载新 `.deb` 后由 `apt` 安装。
 - **本地构建**：
 

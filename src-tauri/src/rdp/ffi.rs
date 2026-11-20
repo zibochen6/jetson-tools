@@ -149,4 +149,8 @@ extern "C" {
     pub fn jr_linux_init(window: *mut c_void, vbox: *mut c_void) -> c_int;
     #[cfg(target_os = "linux")]
     pub fn jr_linux_surface_handle() -> *mut c_void;
+    /// Record the GTK main thread. Must run on the process main thread before
+    /// Tauri starts; `jr_linux_init` also records it lazily.
+    #[cfg(target_os = "linux")]
+    pub fn jr_linux_record_main_thread();
 }

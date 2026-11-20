@@ -186,7 +186,15 @@ GFX 是否连上**只能用 PubSub 钩子**判断（`jr_on_channel_connected` �
 
 **新增的关键不变量**（详见 `docs/KNOWN_ISSUES.md` KI-043 与 `docs/CONNECTION_REGRESSION_GUIDE.md` §2.4）：native view 的所有权属于**帧回调上下文**（`SessionContext.view` 持 `Arc`），`Box::from_raw(context)` 只允许在 join 成功分支执行；会话析构路径禁止一切主队列同步派发。
 
-## 12. Linux（GTK3）平台视图（2026-11-20，v0.3.12）
+## 12. Linux（GTK3）平台视图（2026-11-20，v0.3.12；v0.3.13 修复）
+
+**v0.3.13 修复（KI-046）**：v0.3.12 用 `g_main_context_is_owner()` 判定 GTK 主线程，
+但 Tauri `.setup()` 运行在两次主循环迭代之间，此时默认 context 没有 owner，判定为
+假，`jr_linux_init` 直接失败——Linux 版能启动，但每次连接都报未知错误。现改为在
+Rust `run()` 起始处显式记录主线程（`jr_linux_record_main_thread`），同步编组用
+线程身份判断；同时忽略 GDK 的 2BUTTON/3BUTTON 事件（它们与普通 press 同时到达，
+旧实现误当成释放）。`linux-ci` 冒烟新增 `overlay installed` 日志断言，防止同类
+“启动成功但桌面未初始化”再次漏过。
 
 `native/freerdp_bridge/linux_view.c` 用 GTK3 实现与 `macos_view.m` **同名**的
 `jr_view_*` / `jr_window_*` / 剪贴板 C 符号，`bridge.c`、`queue.c`、`session.rs`

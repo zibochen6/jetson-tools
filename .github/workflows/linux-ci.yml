@@ -65,7 +65,8 @@ jobs:
           DEB=$(ls src-tauri/target/release/bundle/deb/*.deb)
           echo "deb=$DEB"
           dpkg-deb -I "$DEB"
-          dpkg-deb -c "$DEB" | grep -E 'applications|icons' | head -20
+          dpkg-deb -c "$DEB" | grep -E '\.desktop$'
+          dpkg-deb -c "$DEB" | grep -E 'icons/hicolor/.*\.png$' | head -5
 
       - name: Clean-container install + start smoke
         run: |
@@ -73,8 +74,10 @@ jobs:
           docker run --rm -v "$(dirname "$DEB"):/debs:ro" ubuntu:24.04 \
             bash -euc '
               export DEBIAN_FRONTEND=noninteractive
+              export XDG_STATE_HOME=/tmp/jr-state
+              mkdir -p "$XDG_STATE_HOME"
               apt-get update -qq
-              apt-get install -y -qq xvfb xauth dbus-x11 libgl1 libegl1 >/dev/null
+              apt-get install -y -qq xvfb xauth dbus-x11 >/dev/null
               apt-get install -y -qq /debs/*.deb >/dev/null
               if ldd /usr/bin/jetson-remote | grep -q "not found"; then
                 echo "::error::missing shared libraries"
@@ -89,7 +92,13 @@ jobs:
               code=$?
               set -e
               echo "smoke exit=$code (124 = still running at timeout)"
+              LOG="$XDG_STATE_HOME/jetson-remote/jetson-remote.log"
+              echo "---- app log ----"
+              cat "$LOG" 2>/dev/null || true
               test "$code" -eq 124
+              # A green timeout is not enough: v0.3.12 shipped with the GTK
+              # overlay init rejected off the main loop. Require the init line.
+              grep -q "overlay installed" "$LOG"
             '
 
       - name: Upload artifact

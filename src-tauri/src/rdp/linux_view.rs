@@ -17,6 +17,14 @@ use super::ffi;
 
 static SURFACE: AtomicUsize = AtomicUsize::new(0);
 
+/// Record the GTK main thread. Call once at the start of `run()` on the
+/// process main thread: Tauri `.setup()` runs between main-loop iterations,
+/// where `g_main_context_is_owner()` is false, so the C view needs an explicit
+/// thread identity (KI-046).
+pub fn record_main_thread() {
+    unsafe { ffi::jr_linux_record_main_thread() };
+}
+
 /// Reparent the webview under a `GtkOverlay` and publish the surface handle.
 ///
 /// Must run on the GTK main thread (Tauri `.setup()`); the C side enforces

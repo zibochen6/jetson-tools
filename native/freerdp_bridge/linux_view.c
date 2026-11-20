@@ -42,8 +42,22 @@
 /* Main-thread marshalling                                             */
 /* ------------------------------------------------------------------ */
 
+/* The GTK main thread, recorded eagerly from Rust `run()` (or lazily by
+ * jr_linux_init). Do NOT identify it with g_main_context_is_owner(): Tauri
+ * runs `.setup()` between main-loop iterations, when the default context has
+ * no owner, so ownership is FALSE even on the GTK main thread. Trusting it
+ * rejected init in every v0.3.12 Linux launch (KI-046). */
+static GThread* g_gtk_thread = NULL;
+
+void jr_linux_record_main_thread(void)
+{
+	g_gtk_thread = g_thread_self();
+}
+
 static gboolean jr_on_main_thread(void)
 {
+	if (g_gtk_thread)
+		return g_thread_self() == g_gtk_thread;
 	return g_main_context_is_owner(g_main_context_default());
 }
 
@@ -179,7 +193,9 @@ int jr_linux_init(void* window, void* vbox)
 	GList* kids = NULL;
 	GList* l = NULL;
 
-	if (!jr_on_main_thread())
+	if (!g_gtk_thread)
+		g_gtk_thread = g_thread_self();
+	if (g_thread_self() != g_gtk_thread)
 	{
 		fprintf(stderr, "[jr-linux] init called off the GTK main thread\n");
 		return -1;
@@ -682,6 +698,11 @@ static gboolean jr_da_button(GtkWidget* widget, GdkEventButton* event, gpointer 
 	int bit;
 
 	if (!s)
+		return FALSE;
+	/* GDK emits GDK_2BUTTON_PRESS/GDK_3BUTTON_PRESS *in addition to* the
+	 * regular GDK_BUTTON_PRESS of that click; ignore the multi-click events
+	 * or they are misread as releases (double-click / triple-click). */
+	if (event->type != GDK_BUTTON_PRESS && event->type != GDK_BUTTON_RELEASE)
 		return FALSE;
 	if (event->type == GDK_BUTTON_PRESS)
 		gtk_widget_grab_focus(widget);
