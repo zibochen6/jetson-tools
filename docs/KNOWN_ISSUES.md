@@ -499,3 +499,17 @@ abandon 路径（4s 超时、退出、并发顶替）会刻意泄漏：worker �
 - **验证（2026-09-23 真机 `192.168.2.20`）**：先人为把 `ListenAddress` 改回 `0.0.0.0` 制造故障态（`check-environment.sh` 正确报 `sesman_listen_local: false`），再重启 App —— **App 全自动完成 探测→classify→bootstrap 改写→重启→重连**，`ListenAddress` 被自动改回 `127.0.0.1`，设备端出现 `chansrv connect successful`，客户端出现 `monitor-ready`。
 - **仍未闭环**：剪贴板**数据面**的最终确认。用 `python3-gi`(GTK) 在会话内直接读写 X 剪贴板做无头验证时，观察到服务端仍未 `FormatDataRequest`、chansrv 也未接管 X selection 所有权 —— 即通道虽已协商，数据流可能仍未打通。**需要一次真人复制/粘贴确认**（这是唯一可靠的判据）。若确认仍不通，下一步是取 chansrv 的 DEBUG 日志（`EnableSyslog=true` 但 `SyslogLevel` 默认 INFO，DEBUG 被挡；需临时把 `[ChansrvLogging] SyslogLevel=DEBUG`）再定位。
 - **状态**：⚠️ 通道层已修复并真机验证；数据面待真人确认。
+
+## KI-046 — Linux v0.3.12 安装后连接必失败：`g_main_context_is_owner()` 误判 GTK 主线程（v0.3.13 已修复，CI 验证）
+
+- **症状**：Ubuntu 24.04 amd64 安装 `Jetson.Remote_0.3.12_amd64.deb` 后应用能启动，但每次连接/打开桌面都返回 `rdp_unknown`，内嵌桌面从不出现；CI 冒烟仍为绿。
+- **根因**：`linux_view.c` 的 `jr_on_main_thread()` 用 `g_main_context_is_owner(g_main_context_default())` 判定 GTK 主线程。Tauri 2.11 在 `RunEvent::Ready`（tao 事件循环回调阶段、`gtk_main_iteration_do` 之外）调用 `.setup()`；GLib 只在迭代/派发期间持有 context owner，因此真实 GTK 主线程上返回 FALSE。`jr_linux_init` 返回 -1 → Rust `SURFACE` 保持 0 → `commands/rdp.rs::window_ns_window` 返回 `RdpError::Unknown`，`launch_session`/`launch_remote_desktop` 在创建任何会话之前失败。
+- **为何 CI 没发现**：v0.3.12 的冒烟只断言进程存活到 20s；`[jr-linux] init called off the GTK main thread` 走 stderr，非 TTY 启动时被重定向到 `$XDG_STATE_HOME/jetson-remote/jetson-remote.log`，CI 没有读取。
+- **修复（v0.3.13，commit 736d91d）**：
+  - Rust `run()` 起始调用新增的 `jr_linux_record_main_thread()` 记录 `g_thread_self()`；`jr_linux_init` 懒记录并在线程不一致时拒绝。
+  - `jr_run_on_main_sync` 的内联判定改为线程身份比较，不再依赖 context ownership。
+  - `linux-ci` 冒烟设置独立 `XDG_STATE_HOME`，超时后打印并 `grep -q "overlay installed"`；同时去掉预先安装 `libgl1/libegl1` 的弱化步骤，改为只装 `xvfb xauth dbus-x11`。
+  - 顺带修复：`GDK_2BUTTON_PRESS`/`GDK_3BUTTON_PRESS` 与普通 press 同时到达，旧 handler 将多击事件误当释放（双击/三击输入异常）。
+- **验证**：linux-ci run 44693446317（commit 736d91d）在干净 `ubuntu:24.04` 容器安装 `.deb`，日志出现 `[jr-linux] overlay installed (webview reparented)`，进程存活到 20s 超时；v0.3.13 的 Release 由同一 tag 构建。
+- **未闭环**：另有用户反馈 v0.3.12 启动后卡死/无响应退出，这与初始化失败可能不是同一问题（初始化失败不会卡住 UI），需要 `$XDG_STATE_HOME/jetson-remote/jetson-remote.log` 与终端输出定位；若加 `WEBKIT_DISABLE_DMABUF_RENDERER=1` 可启动，则按 WebKitGTK/GPU 渲染问题处理。
+- **状态**：✅ 初始化链路已修复并由 CI 冒烟断言验证；真实 24.04 桌面 + Jetson 的图形交互验收仍未完成。
