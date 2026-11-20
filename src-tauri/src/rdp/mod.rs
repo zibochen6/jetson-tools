@@ -13,11 +13,11 @@ pub mod error;
 pub mod ffi;
 pub mod free_adapter;
 pub mod freerdp;
-pub mod manager;
-pub mod native_view;
 /// Linux (GTK3) window embedding bootstrap; compiled on Linux only.
 #[cfg(target_os = "linux")]
 pub mod linux_view;
+pub mod manager;
+pub mod native_view;
 pub mod process;
 pub mod session;
 pub mod types;

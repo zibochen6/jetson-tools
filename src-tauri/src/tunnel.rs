@@ -381,10 +381,7 @@ fn default_tunnel_root() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join("Library/Application Support/com.jetsonremote.app/tunnel"),
-        )
+        Some(PathBuf::from(home).join("Library/Application Support/com.jetsonremote.app/tunnel"))
     }
     #[cfg(target_os = "linux")]
     {
