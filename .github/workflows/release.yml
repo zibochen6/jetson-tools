@@ -44,7 +44,7 @@ jobs:
             --manifest-path src-tauri/Cargo.toml | jq -r '.packages[0].version')
           LOCK=$(awk '
             /^name = "jetson-remote"$/ { found=1; next }
-            found && /^version = / { gsub(/[version ="]/, ""); print; exit }
+            found && /^version = "/ { split($0, a, "\""); print a[2]; exit }
           ' src-tauri/Cargo.lock)
           echo "tag=$RAW base=$BASE package.json=$PKG tauri.conf=$CONF Cargo.toml=$CARGO Cargo.lock=$LOCK"
           for v in "$PKG" "$CONF" "$CARGO" "$LOCK"; do

@@ -105,14 +105,14 @@ pub fn run() {
                 use tauri::Manager;
                 match app.get_webview_window("main") {
                     Some(win) => {
-                        let window = win
-                            .gtk_window()
-                            .ok()
-                            .map(|w| w.to_glib_none().0.cast::<std::ffi::c_void>());
-                        let vbox = win
-                            .default_vbox()
-                            .ok()
-                            .map(|v| v.to_glib_none().0.cast::<std::ffi::c_void>());
+                        let window = win.gtk_window().ok().map(|w| {
+                            let ptr: *mut gtk::ffi::GtkApplicationWindow = w.to_glib_none().0;
+                            ptr.cast::<std::ffi::c_void>()
+                        });
+                        let vbox = win.default_vbox().ok().map(|v| {
+                            let ptr: *mut gtk::ffi::GtkBox = v.to_glib_none().0;
+                            ptr.cast::<std::ffi::c_void>()
+                        });
                         match (window, vbox) {
                             (Some(window), Some(vbox)) => {
                                 if let Err(err) = rdp::linux_view::init(window, vbox) {

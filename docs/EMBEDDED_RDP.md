@@ -185,3 +185,40 @@ GFX 是否连上**只能用 PubSub 钩子**判断（`jr_on_channel_connected` �
 | bridge 单 owner 命令队列（KI-027） | `disconnecting` 改互锁 + `jr_maybe_emit` 入口短路 | 未触及队列语义；新增的只是 worker 线程上的一个标志读取，不入队 |
 
 **新增的关键不变量**（详见 `docs/KNOWN_ISSUES.md` KI-043 与 `docs/CONNECTION_REGRESSION_GUIDE.md` §2.4）：native view 的所有权属于**帧回调上下文**（`SessionContext.view` 持 `Arc`），`Box::from_raw(context)` 只允许在 join 成功分支执行；会话析构路径禁止一切主队列同步派发。
+
+## 12. Linux（GTK3）平台视图（2026-11-20，v0.3.12）
+
+`native/freerdp_bridge/linux_view.c` 用 GTK3 实现与 `macos_view.m` **同名**的
+`jr_view_*` / `jr_window_*` / 剪贴板 C 符号，`bridge.c`、`queue.c`、`session.rs`
+不需要平台分支。`build.rs` 用 `CARGO_CFG_TARGET_OS` 选择 `.m` 或 `.c`，macOS
+路径保持原样。
+
+- **嵌入**：Tauri `.setup()`（GTK 主线程）调用 `jr_linux_init(window, vbox)`；
+  遍历 `default_vbox` 找到 `WebKitWebView`，创建 `GtkOverlay` 并把 webview
+  重挂进去（`remove(vbox)` → `add(overlay)` → `pack_start(vbox, overlay)`）。
+- **几何**：每会话一个 `GtkDrawingArea` 作为 overlay 子控件，`margin_top = 44`
+  （`SESSION_TAB_BAR_INSET`）；`jr_window_content_size` 读 `size-allocate` 原子
+  缓存，窗口未 map 时回退内容尺寸 1280×800（Rust 再减 44）；
+  `jr_window_safe_area_top` 返回 0。
+- **线程**：所有 GTK 操作经 `jr_run_on_main_sync`（GCond +
+  `g_main_context_invoke_full`）编组；`present_buffer` 返回前拷贝 BGRX 帧，
+  再异步 `queue_draw`（主线程只保留最新帧）。`attach_input`、`add/remove`、
+  `destroy` 为同步调用，保证 detach 先于 session 销毁。
+- **渲染**：`cairo_image_surface_create_for_data(..., CAIRO_FORMAT_RGB24)` 直接
+  包裹 FreeRDP 的 BGRX32 像素；aspect-fit 居中，黑边用 fill 色填充。
+- **输入**：GDK 按钮 2=中键、3=右键，需交换成 bridge 期望的 2=右键、3=中键；
+  `hardware_keycode - 8` → evdev → 静态 XT set-1 表（含 E0）；文本/死键走
+  `GtkIMContext`，Ctrl/Super/Alt 组合走 scancode；preedit 不发送，commit 走
+  `jr_session_enqueue_unicode_text`；组合期被 IME 吞掉的 Enter/Tab/Esc/方向键
+  在 commit 后补发按下+抬起（对齐 macOS `doCommandBySelector`）。
+  focus-out/窗口失活时 `jr_session_enqueue_reset_modifiers`。
+- **剪贴板**：`GDK_SELECTION_CLIPBOARD` + 0.5s `gtk_clipboard_request_text`
+  （禁止 `gtk_clipboard_wait_for_text`）；owner/generation 为原子量，
+  `sync_start`/`sync_stop` 在调用方同步更新；开始同步时立即
+  `jr_clip_store_text` + enqueue 快照（KI-040 多会话行为）；远端写入先更新
+  echo 基线再写剪贴板（KI-045 同语义）。
+- **路径**：日志 `$XDG_STATE_HOME/jetson-remote/`，密钥与隧道
+  `$XDG_CONFIG_HOME/com.jetsonremote.app/`。
+- **验证**：GitHub Actions `linux-ci.yml` 在 `ubuntu-24.04` 构建 `.deb`，在干净
+  `ubuntu:24.04` 容器里 `apt install ./deb` + `ldd` + Xvfb 启动冒烟；GUI
+  键鼠/IME/双向剪贴板在 24.04 桌面真机验收（README「Linux 支持」）。
